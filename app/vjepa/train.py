@@ -268,6 +268,7 @@ def main(args, resume_preempt=False):
          pin_mem=pin_mem,
          rank=rank,
          log_dir=folder if log_resource_util_data else None)
+    print(1/0)
     try:
         _dlen = len(unsupervised_loader)
     except Exception:  # Different interface for webdataset
