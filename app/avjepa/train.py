@@ -25,6 +25,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
+from torch.nn import DataParallel
 
 from src.datasets.data_manager import init_data
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
@@ -248,6 +249,7 @@ def main(args, resume_preempt=False):
         crop_size=crop_size)
 
     # -- init data-loaders/samplers
+    print(f"dataset_type is: {dataset_type}")
     (unsupervised_loader,
      unsupervised_sampler) = init_data(
          data=dataset_type,
@@ -292,9 +294,9 @@ def main(args, resume_preempt=False):
         mixed_precision=mixed_precision,
         betas=betas,
         eps=eps)
-    encoder = DistributedDataParallel(encoder, static_graph=True)
-    predictor = DistributedDataParallel(predictor, static_graph=True)
-    target_encoder = DistributedDataParallel(target_encoder)
+    encoder = DataParallel(encoder)
+    predictor = DataParallel(predictor)
+    target_encoder = DataParallel(target_encoder)
     for p in target_encoder.parameters():
         p.requires_grad = False
 

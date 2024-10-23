@@ -2,11 +2,9 @@ app: avjepa
 #nodes: 16
 #tasks_per_node: 8
 data:
-  dataset_type: VideoAudioDataset
+  dataset_type: audiovideodataset
   datasets:
-    - /your_path_to_kinetics710_csv_file_index.csv
-    - /your_path_to_ssv2_csv_file_index.csv
-    - /your_path_to_howto100m_csv_file_index.csv
+    - C:\Users\johns\OneDrive\Desktop\Datasets\JEPA\kinetics\20k_kinetic400_dataset.csv
   decode_one_clip: true
   batch_size: 24
   num_clips: 1

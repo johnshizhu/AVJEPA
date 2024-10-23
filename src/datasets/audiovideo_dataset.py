@@ -16,8 +16,8 @@ import pandas as pd
 
 from decord import VideoReader, cpu
 
+import ffmpeg
 import librosa
-import librosa.display
 
 import torch
 
@@ -187,115 +187,152 @@ class AudioVideoDataset(torch.utils.data.Dataset):
         return buffer, label, clip_indices
 
     def loadaudiovideo_decord(self, sample):
-        """ Load video AND audio content using Decord and other package """
+        """ Load video AND audio content using Decord and ffmpeg """
 
         fname = sample
         if not os.path.exists(fname):
             warnings.warn(f'data path not found {fname=}')
-            return [], None
+            return [], None, None
 
         _fsize = os.path.getsize(fname)
         if _fsize < 1 * 1024:  # avoid hanging issue
             warnings.warn(f'video too short {fname=}')
-            return [], None
+            return [], None, None
         if _fsize > self.filter_long_videos:
             warnings.warn(f'skipping long video of size {_fsize=} (bytes)')
-            return [], None
+            return [], None, None
 
-        # VIDEO
+        # VIDEO - Get fps immediately after creating VideoReader
         try:
             vr = VideoReader(fname, num_threads=-1, ctx=cpu(0))
+            fps = vr.get_avg_fps()  # Get fps here
+            if fps <= 0 or np.isnan(fps):
+                warnings.warn(f'Invalid fps value: {fps}')
+                return [], None, None
         except Exception:
-            return [], None
+            return [], None, None
         
         # AUDIO
         try:
-            y, sr = librosa.load(fname, sr=None)
-        except Exception:
-            return [], None
+            stream = ffmpeg.input(fname)
+            audio_stream = stream.audio
+            # Get audio as 16-bit PCM with original sample rate
+            audio_array, err = (
+                audio_stream
+                .output('pipe:', format='f32le', acodec='pcm_f32le')
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+            
+            # Convert binary audio data to numpy array
+            audio_data = np.frombuffer(audio_array, np.float32)
+            
+            # Get the audio sample rate from the input file
+            probe = ffmpeg.probe(fname)
+            audio_info = next(s for s in probe['streams'] if s['codec_type'] == 'audio')
+            sr = int(audio_info['sample_rate'])
+        
+        except Exception as e:
+            warnings.warn(f'Failed to load audio: {str(e)}')
+            return [], None, None
 
         fpc = self.frames_per_clip
         fstp = self.frame_step
         if self.duration is not None:
             try:
-                fps = vr.get_avg_fps()
                 fstp = int(self.duration * fps / fpc)
             except Exception as e:
-                warnings.warn(e)
+                warnings.warn(str(e))
+                return [], None, None
         clip_len = int(fpc * fstp)
 
         if self.filter_short_videos and len(vr) < clip_len:
             warnings.warn(f'skipping video of length {len(vr)}')
-            return [], None
+            return [], None, None
 
         vr.seek(0)  # Go to start of video before sampling frames
 
         # Partition video into equal sized segments and sample each clip
-        # from a different segment
         partition_len = len(vr) // self.num_clips
 
         all_indices, clip_indices = [], []
-        for i in range(self.num_clips):
-
-            if partition_len > clip_len:
-                # If partition_len > clip len, then sample a random window of
-                # clip_len frames within the segment
-                end_indx = clip_len
-                if self.random_clip_sampling:
-                    end_indx = np.random.randint(clip_len, partition_len)
-                start_indx = end_indx - clip_len
-                indices = np.linspace(start_indx, end_indx, num=fpc)
-                indices = np.clip(indices, start_indx, end_indx-1).astype(np.int64)
-                # --
-                indices = indices + i * partition_len
-            else:
-                # If partition overlap not allowed and partition_len < clip_len
-                # then repeatedly append the last frame in the segment until
-                # we reach the desired clip length
-                if not self.allow_clip_overlap:
-                    indices = np.linspace(0, partition_len, num=partition_len // fstp)
-                    indices = np.concatenate((indices, np.ones(fpc - partition_len // fstp) * partition_len,))
-                    indices = np.clip(indices, 0, partition_len-1).astype(np.int64)
-                    # --
+        try:
+            for i in range(self.num_clips):
+                if partition_len > clip_len:
+                    # If partition_len > clip len, then sample a random window of
+                    # clip_len frames within the segment
+                    end_indx = clip_len
+                    if self.random_clip_sampling:
+                        end_indx = np.random.randint(clip_len, partition_len)
+                    start_indx = end_indx - clip_len
+                    indices = np.linspace(start_indx, end_indx, num=fpc)
+                    indices = np.clip(indices, start_indx, end_indx-1).astype(np.int64)
                     indices = indices + i * partition_len
-
-                # If partition overlap is allowed and partition_len < clip_len
-                # then start_indx of segment i+1 will lie within segment i
                 else:
-                    sample_len = min(clip_len, len(vr)) - 1
-                    indices = np.linspace(0, sample_len, num=sample_len // fstp)
-                    indices = np.concatenate((indices, np.ones(fpc - sample_len // fstp) * sample_len,))
-                    indices = np.clip(indices, 0, sample_len-1).astype(np.int64)
-                    # --
-                    clip_step = 0
-                    if len(vr) > clip_len:
-                        clip_step = (len(vr) - clip_len) // (self.num_clips - 1)
-                    indices = indices + i * clip_step
+                    if not self.allow_clip_overlap:
+                        indices = np.linspace(0, partition_len, num=partition_len // fstp)
+                        indices = np.concatenate((indices, np.ones(fpc - partition_len // fstp) * partition_len,))
+                        indices = np.clip(indices, 0, partition_len-1).astype(np.int64)
+                        indices = indices + i * partition_len
+                    else:
+                        sample_len = min(clip_len, len(vr)) - 1
+                        indices = np.linspace(0, sample_len, num=sample_len // fstp)
+                        indices = np.concatenate((indices, np.ones(fpc - sample_len // fstp) * sample_len,))
+                        indices = np.clip(indices, 0, sample_len-1).astype(np.int64)
+                        clip_step = 0
+                        if len(vr) > clip_len:
+                            clip_step = (len(vr) - clip_len) // (self.num_clips - 1)
+                        indices = indices + i * clip_step
 
-            clip_indices.append(indices)
-            all_indices.extend(list(indices))
+                clip_indices.append(indices)
+                all_indices.extend(list(indices))
 
-        buffer = vr.get_batch(all_indices).asnumpy()
+            buffer = vr.get_batch(all_indices).asnumpy()
+        except Exception as e:
+            warnings.warn(f'Failed to sample video frames: {str(e)}')
+            return [], None, None
 
-        # Extract CONTINUOUS audio spectrogram of video clip.
-        frame_duration_sec = 1 / fps
+        try:
+            # Audio processing with guaranteed fps
+            frame_duration_sec = 1 / fps
+            start_frame = int(clip_indices[0][0])
+            end_frame = int(clip_indices[-1][-1])
 
-        start_frame = int(clip_indices[0][0])
-        end_frame = int(clip_indices[-1][-1])
+            start_time = start_frame * frame_duration_sec
+            end_time = (end_frame + 1) * frame_duration_sec 
 
-        # Time conversion
-        start_time = start_frame * frame_duration_sec
-        end_time = (end_frame + 1) * frame_duration_sec 
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
+            
+            if end_sample > len(audio_data):
+                warnings.warn('Audio clip exceeds audio data length')
+                return [], None, None
+                
+            audio_clip = audio_data[start_sample:end_sample]
 
-        # Audio sample indices
-        start_sample = int(start_time * sr)
-        end_sample = int(end_time * sr)
-        audio_clip = y[start_sample:end_sample]
+            if len(audio_clip) == 0:
+                warnings.warn('Empty audio clip')
+                return [], None, None
 
-        S = librosa.stft(audio_clip)
-        S_dB = librosa.amplitude_to_db(np.abs(S), ref=np.max)
-
-        return buffer, clip_indices, S_dB
-
+            # Compute spectrogram
+            S = librosa.stft(audio_clip, 
+                            n_fft=2048,
+                            hop_length=512,
+                            win_length=None,
+                            window='hann')
+            
+            # Convert to mel spectrogram
+            mel_S = librosa.feature.melspectrogram(S=np.abs(S), 
+                                                sr=sr,
+                                                n_mels=128)
+            
+            # Convert to log scale
+            S_dB = librosa.power_to_db(mel_S, ref=np.max, top_db=80)
+            
+            return buffer, clip_indices, S_dB
+        
+        except Exception as e:
+            warnings.warn(f'Failed to process audio: {str(e)}')
+            return [], None, None
+    
     def __len__(self):
         return len(self.samples)
