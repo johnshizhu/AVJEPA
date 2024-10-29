@@ -41,9 +41,9 @@ from src.utils.logging import (
     AverageMeter)
 from src.utils.tensors import repeat_interleave_batch
 
-from app.vjepa.utils import (
+from app.avjepa.utils import (
     load_checkpoint,
-    init_video_model,
+    init_audio_video_model,
     init_opt,
 )
 from app.vjepa.transforms import make_transforms
@@ -205,7 +205,8 @@ def main(args, resume_preempt=False):
     )
 
     # -- init model
-    encoder, predictor = init_video_model(
+    logger.info("Initializing models")
+    encoder, predictor = init_audio_video_model(
         uniform_power=uniform_power,
         use_mask_tokens=use_mask_tokens,
         num_mask_tokens=len(cfgs_mask),
@@ -251,7 +252,8 @@ def main(args, resume_preempt=False):
     # -- init data-loaders/samplers
     print(f"dataset_type is: {dataset_type}")
     (unsupervised_loader,
-     unsupervised_sampler) = init_data(
+     unsupervised_sampler,
+     unsupervised_dataset) = init_data(
          data=dataset_type,
          root_path=dataset_paths,
          batch_size=batch_size,
@@ -270,6 +272,7 @@ def main(args, resume_preempt=False):
          pin_mem=pin_mem,
          rank=rank,
          log_dir=folder if log_resource_util_data else None)
+    #logger.info(f'init_data complete...')
     try:
         _dlen = len(unsupervised_loader)
     except Exception:  # Different interface for webdataset
@@ -347,8 +350,9 @@ def main(args, resume_preempt=False):
         except Exception as e:
             logger.info(f'Encountered exception when saving checkpoint: {e}')
 
-    logger.info('Initializing loader...')
+    #logger.info('Initializing loader...')
     loader = iter(unsupervised_loader)
+    #logger.info(f'Loader type is: {type(loader)}')
 
     if skip_batches > 0:
         logger.info(f'Skip {skip_batches} batches')
@@ -362,6 +366,7 @@ def main(args, resume_preempt=False):
                 loader = iter(unsupervised_loader)
                 udata = next(loader)
 
+    #logger.info('Beginning Training Loop...')
     # -- TRAINING LOOP
     for epoch in range(start_epoch, num_epochs):
         logger.info('Epoch %d' % (epoch + 1))
@@ -379,8 +384,8 @@ def main(args, resume_preempt=False):
         wall_time_meter = AverageMeter()
 
         for itr in range(ipe):
+            #logger.info(f'Beginning Iteration {itr}...')
             itr_start_time = time.time()
-
             try:
                 udata, masks_enc, masks_pred = next(loader)
             except Exception:
@@ -389,7 +394,6 @@ def main(args, resume_preempt=False):
                 udata, masks_enc, masks_pred = next(loader)
             assert len(masks_enc) == len(masks_pred), \
                 'Currently require num encoder masks = num predictor masks'
-
             def load_clips():
                 # -- unsupervised video clips
                 # Put each clip on the GPU and concatenate along batch
@@ -406,36 +410,70 @@ def main(args, resume_preempt=False):
                     _mp = repeat_interleave_batch(_mp, batch_size, repeat=num_clips)
                     _masks_enc.append(_me)
                     _masks_pred.append(_mp)
-
+            
                 return (clips, _masks_enc, _masks_pred)
+
+            # logger.info(f'udata length is: {len(udata)}')
+            # logger.info(f'udata[0] len is: {len(udata[0])}')
+            # logger.info(f'udata[1] shape is: {udata[1].shape}')
+            # logger.info(f'udata[2] len is: {len(udata[2])}')
+            # logger.info(f'udata[0][0] shape is: {udata[0][0].shape}')
+            # logger.info(f'udata[2][0] shape is: {udata[2][0].shape}')
+            # logger.info(f'udata[3] shape is: {udata[3].shape}')
+
+            # logger.info(f'masks_enc type is: {type(masks_enc)}')
+            # logger.info(f'masks_pred type is: {type(masks_pred)}')
+
+
             clips, masks_enc, masks_pred = load_clips()
+
+
+            # print("\n")
+            # logger.info(f'clips shape is: {clips.shape}')
+            # logger.info(f'masks_enc length is: {len(masks_enc)}')
+            # logger.info(f'masks_enc[0] shape is: {masks_enc[0].shape}')
+            # logger.info(f'masks_enc[1] shape is: {masks_enc[1].shape}')
+            # logger.info(f'masks_pred length is: {len(masks_pred)}')
+            # logger.info(f'masks_pred[0] shape is: {masks_pred[0].shape}')
+            # logger.info(f'masks_pred[1] shape is: {masks_pred[1].shape}')
+            # print("\n")
+
+            # At this point the video has not been altered in any way
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc[_i][0].size(-1))
 
+            # Audiospectrogram Data Edit
+            asgram = udata[3].unsqueeze(1)
+
             def train_step():
+                #logger.info("Beginning Train Step...")
                 _new_lr = scheduler.step()
                 _new_wd = wd_scheduler.step()
                 # --
 
-                def forward_target(c):
+                def forward_target(c, a):
                     """
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
                     with torch.no_grad():
-                        h = target_encoder(c)
+                        #logger.info("Forward Target...")
+                        #logger.info(f'target_encoder type is: {type(target_encoder)}')
+                        h = target_encoder(c, a)
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
                         h = apply_masks(h, masks_pred, concat=False)
                         return h
 
-                def forward_context(c, h):
+                def forward_context(c, a, h):
                     """
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    z = encoder(c, masks_enc)
+                    #logger.info("Forward Context...")
+                    z = encoder(c, a, masks_enc)
+                    #logger.info("Predictor...")
                     z = predictor(z, h, masks_enc, masks_pred)
                     return z
 
@@ -451,15 +489,20 @@ def main(args, resume_preempt=False):
                     return sum([torch.sqrt(zi.var(dim=1) + 0.0001) for zi in z]) / len(z)
 
                 # Step 1. Forward
+                #logger.info('Beginning Forward Pass...')
                 loss_jepa, loss_reg = 0., 0.
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
-                    h = forward_target(clips)
-                    z = forward_context(clips, h)
+                    #logger.info(f'c type is: {type(clips)}')
+                    #logger.info(f'c shape is: {clips.shape}\n')
+                    h = forward_target(clips, asgram)
+                    #logger.info(f'forward_target done')
+                    z = forward_context(clips, asgram, h)
+                    #logger.info(f'forward_context done')
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
-
+                #logger.info(f'Loss is: {loss}')
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.
                 if mixed_precision:

@@ -63,7 +63,7 @@ def make_audiovideodataset(
         shared_transform=shared_transform,
         transform=transform)
 
-    logger.info('VideoDataset dataset created')
+    logger.info('AudioVideoDataset dataset created')
     if datasets_weights is not None:
         dist_sampler = DistributedWeightedSampler(
             dataset.sample_weights,
@@ -86,7 +86,7 @@ def make_audiovideodataset(
         pin_memory=pin_mem,
         num_workers=num_workers,
         persistent_workers=num_workers > 0)
-    logger.info('VideoDataset unsupervised data loader created')
+    logger.info('AudioVideoDataset unsupervised data loader created')
 
     return dataset, data_loader, dist_sampler
 
@@ -168,6 +168,9 @@ class AudioVideoDataset(torch.utils.data.Dataset):
                 index = np.random.randint(self.__len__())
                 sample = self.samples[index]
 
+        #logger.info(f'buffer shape: {buffer.shape}')
+        #logger.info(f'sgram shape: {sgram.shape}')
+
         # Label/annotations for video
         label = self.labels[index]
 
@@ -184,7 +187,11 @@ class AudioVideoDataset(torch.utils.data.Dataset):
         if self.transform is not None:
             buffer = [self.transform(clip) for clip in buffer]
 
-        return buffer, label, clip_indices
+        #logger.info(f'buffer type: {type(buffer)}')
+        #logger.info(f'label type: {type(label)}')
+        #logger.info(f'clip_indices type: {type(clip_indices)}')
+        #print("\n")
+        return buffer, label, clip_indices, sgram
 
     def loadaudiovideo_decord(self, sample):
         """ Load video AND audio content using Decord and ffmpeg """
@@ -327,8 +334,22 @@ class AudioVideoDataset(torch.utils.data.Dataset):
             
             # Convert to log scale
             S_dB = librosa.power_to_db(mel_S, ref=np.max, top_db=80)
-            
-            return buffer, clip_indices, S_dB
+            #logger.info(f'buffer type is: {type(buffer)}')
+            #logger.info(f'buffer shape is: {buffer.shape}')
+
+            # cropping / padding audiospectrogram to constant shape
+            sgram_shape = S_dB.shape
+
+            if (sgram_shape[1] > 184):
+                sgram = S_dB[:, :184]
+
+            if (sgram_shape[1] < 184):
+                sgram = np.pad(S_dB, ((0, 0), (0, 184 - sgram_shape[1])), mode='constant')
+
+            #logger.info(f'sgram type is: {type(S_dB)}')
+            #logger.info(f'sgram shape is: {S_dB.shape}')
+
+            return buffer, clip_indices, sgram
         
         except Exception as e:
             warnings.warn(f'Failed to process audio: {str(e)}')

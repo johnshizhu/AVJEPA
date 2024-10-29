@@ -111,4 +111,44 @@ def init_data(
             drop_last=drop_last,
             log_dir=log_dir)
 
-    return (data_loader, dist_sampler)
+    # a, b, c, d = dataset.__getitem__(0)
+    # logger.info("DATASET")
+    # logger.info(f'a[0] shape is: {a[0].shape}')
+    # logger.info(f'b is: {b}')
+    # logger.info(f'c[0] shape is: {c[0].shape}')
+    # logger.info(f'c[0] is: {c[0]}')
+    # logger.info(f'd type is: {type(d)}')
+    # logger.info(f'd shape is: {d.shape}')
+    
+    # logger.info("Beginning Testing List Loader...")
+    # for batch in data_loader:
+    #     a, b, c, d = batch[0]
+    #     break
+    
+    # logger.info("LOADER LOOP")
+    # logger.info(f'a2[0] shape: {a[0].shape}')
+    # logger.info(f'b2 is: {b}')
+    # logger.info(f'c2[0] shape: {c[0].shape}')
+    # logger.info(f'c2[0][0] is: {c[0][0]}')
+    # logger.info(f'd type is: {type(d)}')
+
+    # logger.info("Beginning Testing Iter Loader...")
+    
+    
+    # loader = iter(data_loader)
+    # logger.info("Testing iter loader created...")
+    # a, b, c, d = next(loader)
+    # logger.info("LOADER ITERATOR")
+    # logger.info(f'a3[0][0] shape is: {a[0][0].shape}')
+    # logger.info(f'a3[1] shape is: {a[1].shape}')
+    # logger.info(f'a3[2][0] shape is: {a[2][0].shape}')
+    # logger.info(f'a3[2][0][0] is: {a[2][0][0]}')
+    # logger.info(f'b3[0][0][:,20] is: {b[0][0]}')
+    # logger.info(f'b3[1] shape is: {b[1].shape}')
+    # logger.info(f'c3[0] shape is: {c[0].shape}')
+    # logger.info(f'c3[1] shape is: {c[1].shape}')
+    # logger.info(f'd type is: {type(d)}')
+
+    # print(1/0)
+    # logger.info(f'Dataloader, Distribution Sampler, and Dataset Created')
+    return (data_loader, dist_sampler, dataset)
