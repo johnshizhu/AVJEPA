@@ -29,7 +29,7 @@ data_aug:
   reprob: 0.0
 logging:
   folder: C:\Users\johns\OneDrive\Desktop\jepa_logs
-  write_tag: jepa
+  write_tag: avjepaTiny
 loss:
   loss_exp: 1.0
   reg_coeff: 0.0

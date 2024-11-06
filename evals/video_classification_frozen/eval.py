@@ -26,7 +26,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 
-from torch.nn.parallel import DistributedDataParallel
+from torch.nn import DataParallel
 
 import src.models.vision_transformer as vit
 from src.models.attentive_pooler import AttentiveClassifier
@@ -228,8 +228,12 @@ def main(args_eval, resume_preempt=False):
         warmup=warmup,
         num_epochs=num_epochs,
         use_bfloat16=use_bfloat16)
-    classifier = DistributedDataParallel(classifier, static_graph=True)
+    
+    logger.info(f'Optimizer and Scheduler Initialized...')
 
+    classifier = DataParallel(classifier)#static_graph=True
+    logger.info(f'Classifier Created...')
+    
     # -- load training checkpoint
     start_epoch = 0
     if resume_checkpoint:
@@ -257,6 +261,7 @@ def main(args_eval, resume_preempt=False):
             torch.save(save_dict, latest_path)
 
     # TRAIN LOOP
+    logger.info("Beginning Training Loop...")
     for epoch in range(start_epoch, num_epochs):
         logger.info('Epoch %d' % (epoch + 1))
         train_acc = run_one_epoch(
@@ -469,7 +474,7 @@ def make_dataloader(
         crop_size=resolution,
     )
 
-    data_loader, _ = init_data(
+    data_loader, _, dataset = init_data(
         data=dataset_type,
         root_path=root_path,
         transform=transform,
