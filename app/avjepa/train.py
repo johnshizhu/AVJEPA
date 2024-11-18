@@ -205,7 +205,21 @@ def main(args, resume_preempt=False):
     )
 
     # -- init model
-    logger.info("Initializing models")
+    # logger.info("Initializing models")
+    # logger.info(f"uniform_power: {uniform_power}")
+    # logger.info(f'use_mask_tokens: {use_mask_tokens}')
+    # logger.info(f'num_mask_tokens: {len(cfgs_mask)}')
+    # logger.info(f'zero_init_mask_tokens: {zero_init_mask_tokens}')
+    # logger.info(f'device: {device}')
+    # logger.info(f'patch_size: {patch_size}')
+    # logger.info(f'num_frames: {num_frames}')
+    # logger.info(f'tubelet_size: {tubelet_size}')
+    # logger.info(f'model_name: {model_name}')
+    # logger.info(f'crop_size: {crop_size}')
+    # logger.info(f'pred_depth: {pred_depth}')
+    # logger.info(f'pred_embed_dim: {pred_embed_dim}')
+    # logger.info(f'use_sdpa: {use_sdpa}')
+    # print(1/0)
     encoder, predictor = init_audio_video_model(
         uniform_power=uniform_power,
         use_mask_tokens=use_mask_tokens,
@@ -252,8 +266,7 @@ def main(args, resume_preempt=False):
     # -- init data-loaders/samplers
     print(f"dataset_type is: {dataset_type}")
     (unsupervised_loader,
-     unsupervised_sampler,
-     unsupervised_dataset) = init_data(
+     unsupervised_sampler) = init_data(
          data=dataset_type,
          root_path=dataset_paths,
          batch_size=batch_size,
@@ -309,6 +322,7 @@ def main(args, resume_preempt=False):
 
     start_epoch = 0
     # -- load training checkpoint
+    logger.info("LOADING CHECKPOINTS")
     if load_model or os.path.exists(latest_path):
         (
             encoder,

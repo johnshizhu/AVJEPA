@@ -151,4 +151,4 @@ def init_data(
 
     # print(1/0)
     # logger.info(f'Dataloader, Distribution Sampler, and Dataset Created')
-    return (data_loader, dist_sampler, dataset)
+    return (data_loader, dist_sampler)

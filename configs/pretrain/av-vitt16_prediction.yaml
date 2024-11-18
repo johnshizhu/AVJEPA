@@ -1,4 +1,4 @@
-app: avjepa
+app: avprediction
 #nodes: 16
 #tasks_per_node: 8
 data:
@@ -29,7 +29,7 @@ data_aug:
   reprob: 0.0
 logging:
   folder: C:\Users\johns\OneDrive\Desktop\jepa_logs
-  write_tag: avjepaTiny-test2
+  write_tag: avjepaTiny-prediction
 loss:
   loss_exp: 1.0
   reg_coeff: 0.0
