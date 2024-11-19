@@ -107,4 +107,4 @@ class AudioVisionPatchEmbed3D(nn.Module):
         # logger.info(f'y embed forward output shape:{y.shape}')
         out = torch.cat([x, y], dim=1)
         #logger.info(f'out shape is: {out.shape}')
-        return x
+        return out
