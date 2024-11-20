@@ -18,6 +18,7 @@ from decord import VideoReader, cpu
 
 import ffmpeg
 import librosa
+from scipy.ndimage import zoom
 
 import torch
 
@@ -327,19 +328,24 @@ class AudioVideoDataset(torch.utils.data.Dataset):
             mel_S = librosa.feature.melspectrogram(S=np.abs(S), sr=sr, n_mels=128)
             S_dB = librosa.power_to_db(mel_S, ref=np.max, top_db=80)
 
-            # Check that S_dB exists
             if S_dB is None:
                 warnings.warn('S_dB not found')
 
-            # hard cropping / padding audiospectrogram to constant shape
-            sgram_shape = S_dB.shape
+            # Interpolate Audiospectrogram
+            interpolation_sgram = True
+            if interpolation_sgram:
+                h, w = S_dB.shape
+                w_ratio = 192 / w
+                sgram = zoom(S_dB, (1, w_ratio), order=1)
+            else: # hard cutting/padding
+                sgram_shape = S_dB.shape
+                if (sgram_shape[1] > 184):
+                    sgram = S_dB[:, :184]
+                elif (sgram_shape[1] < 184):
+                    sgram = np.pad(S_dB, ((0, 0), (0, 184 - sgram_shape[1])), mode='constant')
+                else:
+                    sgram = S_dB
 
-            if (sgram_shape[1] > 184):
-                sgram = S_dB[:, :184]
-            elif (sgram_shape[1] < 184):
-                sgram = np.pad(S_dB, ((0, 0), (0, 184 - sgram_shape[1])), mode='constant')
-            else:
-                sgram = S_dB
 
             return buffer, clip_indices, sgram
         

@@ -62,6 +62,24 @@ def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
         pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
     return pos_embed
 
+def get_2d_sincos_pos_embed_xy(embed_dim, grid_h, grid_w, cls_token=False):
+    """
+    grid_size: int of the grid height and width
+    returns:
+        pos_embed: [grid_size*grid_size, embed_dim] (w/o cls_token)
+                or [1+grid_size*grid_size, embed_dim] (w/ cls_token)
+    """
+    grid_h = np.arange(grid_h, dtype=float)
+    grid_w = np.arange(grid_w, dtype=float)
+    grid_w, grid_h = np.meshgrid(grid_w, grid_h)  # order of meshgrid is very important for indexing as [h, w]
+
+    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_h)  # (H*W, D/2)
+    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 2, grid_w)  # (H*W, D/2)
+    pos_embed = np.concatenate([emb_h, emb_w], axis=1)  # (H*W, D)
+    if cls_token:
+        pos_embed = np.concatenate([np.zeros([1, embed_dim]), pos_embed], axis=0)
+    return pos_embed
+
 
 def get_1d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """

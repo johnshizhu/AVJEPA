@@ -97,14 +97,6 @@ class AudioVisionPatchEmbed3D(nn.Module):
 
     def forward(self, x, y, **kwargs):
         B, C, T, H, W = x.shape
-        #logger.info(f'x shape is: {x.shape}')
-        #logger.info(f'y shape is: {y.shape}')
         x = self.proj(x).flatten(2).transpose(1, 2)
         y = self.audio_proj(y).flatten(2).transpose(1, 2)
-        # logger.info(f'x embed forward output type:{type(x)}')
-        # logger.info(f'x embed forward output shape:{x.shape}')
-        # logger.info(f'y embed forward output type:{type(y)}')
-        # logger.info(f'y embed forward output shape:{y.shape}')
-        out = torch.cat([x, y], dim=1)
-        #logger.info(f'out shape is: {out.shape}')
-        return out
+        return x, y

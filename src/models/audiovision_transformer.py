@@ -13,7 +13,7 @@ import torch.nn as nn
 
 from src.models.utils.patch_embed import PatchEmbed, PatchEmbed3D, AudioVisionPatchEmbed3D
 from src.models.utils.modules import Block
-from src.models.utils.pos_embs import get_2d_sincos_pos_embed, get_3d_sincos_pos_embed
+from src.models.utils.pos_embs import get_1d_sincos_pos_embed, get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_xy, get_3d_sincos_pos_embed
 from src.utils.tensors import trunc_normal_
 from src.masks.utils import apply_masks
 
@@ -62,18 +62,11 @@ class AudioVisionTransformer(nn.Module):
 
         # Tokenize pixels with convolution
         if self.is_video:
-            # self.patch_embed = PatchEmbed3D(
-            #     patch_size=patch_size,
-            #     tubelet_size=tubelet_size,
-            #     in_chans=in_chans,
-            #     embed_dim=embed_dim)
-            #logger.info(f'Beginning Patch Embedding...')
             self.patch_embed = AudioVisionPatchEmbed3D(
                 patch_size=patch_size,
                 tubelet_size=tubelet_size,
                 in_chans=in_chans,
                 embed_dim=embed_dim)
-            #logger.info(f'Created Patch Embedding')
             self.num_patches = (
                 (num_frames // tubelet_size)
                 * (img_size // patch_size)
@@ -91,9 +84,13 @@ class AudioVisionTransformer(nn.Module):
 
         # Position embedding
         self.uniform_power = uniform_power
-        self.pos_embed = None
-        self.pos_embed = nn.Parameter(
+        self.video_pos_embed = None
+        logger.info(f'num_patches is: {self.num_patches}')
+        self.video_pos_embed = nn.Parameter(
             torch.zeros(1, self.num_patches, embed_dim),
+            requires_grad=False)
+        self.audio_pos_embed = nn.Parameter(
+            torch.zeros(1, 96, embed_dim), # based on current calculation method, always 96 tokens
             requires_grad=False)
 
         # Attention Blocks
@@ -114,14 +111,18 @@ class AudioVisionTransformer(nn.Module):
         self.norm = norm_layer(embed_dim)
 
         # ------ initialize weights
-        if self.pos_embed is not None:
-            self._init_pos_embed(self.pos_embed.data)  # sincos pos-embed
+        if self.video_pos_embed is not None:
+            self._init_video_pos_embed(self.video_pos_embed.data)  # sincos pos-embed
+            logger.info("video positional embedding intialized")
+        if self.audio_pos_embed is not None:
+            self._init_audio_pos_embed(self.audio_pos_embed.data)
+            logger.info("audio positional embedding initialized")
         self.init_std = init_std
         self.apply(self._init_weights)
         self._rescale_blocks()
 
-    def _init_pos_embed(self, pos_embed):
-        embed_dim = pos_embed.size(-1)
+    def _init_video_pos_embed(self, video_pos_embed):
+        embed_dim = video_pos_embed.size(-1)
         grid_size = self.input_size // self.patch_size
         if self.is_video:
             grid_depth = self.num_frames // self.tubelet_size
@@ -134,7 +135,22 @@ class AudioVisionTransformer(nn.Module):
             )
         else:
             sincos = get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False)
-        pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+        video_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+
+    def _init_audio_pos_embed(self, audio_pos_embed):
+        embed_dim = audio_pos_embed.size(-1)
+        # based on current implementation, audiospectrogram is always 128 by 192
+        grid_h = 128 // self.patch_size
+        grid_w = 192 // self.patch_size
+        
+        sincos = get_2d_sincos_pos_embed_xy(
+            embed_dim,
+            grid_h,
+            grid_w,
+            cls_token=False
+        )
+        
+        audio_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -172,21 +188,24 @@ class AudioVisionTransformer(nn.Module):
         :param x: input image/video
         :param masks: indices of patch tokens to mask (remove)
         """
-
-        #logger.info('Forward Pass')
-
         if masks is not None and not isinstance(masks, list):
             masks = [masks]
 
         # Tokenize input
-        pos_embed = self.pos_embed
-        if pos_embed is not None:
-            pos_embed = self.interpolate_pos_encoding(x, pos_embed)
-        x = self.patch_embed(x, y)
-        #logger.info(f'tokenization output shape is: {x.shape}')
-        if pos_embed is not None:
-            x += pos_embed
+        video_pos_embed = self.video_pos_embed
+        audio_pos_embed = self.audio_pos_embed
+        if video_pos_embed is not None:
+            video_pos_embed = self.interpolate_pos_encoding(x, video_pos_embed)
+
+        video_tokens, audio_tokens = self.patch_embed(x, y)
+        video_tokens += video_pos_embed
+        audio_tokens += audio_pos_embed
+
+        x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
+
         B, N, D = x.shape
+
+        print(1/0)
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
