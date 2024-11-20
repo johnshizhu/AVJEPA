@@ -303,16 +303,8 @@ class AudioVideoDataset(torch.utils.data.Dataset):
             frame_duration_sec = 1 / fps
             start_frame = int(clip_indices[0][0])
             end_frame = int(clip_indices[-1][-1])
-
             start_time = start_frame * frame_duration_sec
             end_time = (end_frame + 1) * frame_duration_sec 
-
-            #logger.info(f'start_frame: {start_frame}')
-            #logger.info(f'end_frame: {end_frame}')
-            #logger.info(f'start_time: {start_time}')
-            #logger.info(f'end_time: {end_time}')
-
-
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
             
@@ -321,7 +313,6 @@ class AudioVideoDataset(torch.utils.data.Dataset):
                 return [], None, None
                 
             audio_clip = audio_data[start_sample:end_sample]
-            #logger.info(f'type audio_clip: {type(audio_clip)}')
 
             if len(audio_clip) == 0:
                 warnings.warn('Empty audio clip')
@@ -333,38 +324,28 @@ class AudioVideoDataset(torch.utils.data.Dataset):
                             hop_length=512,
                             win_length=None,
                             window='hann')
-            #logger.info(f'S type is: {type(S)}')
-
-            # Convert to mel spectrogram
-            mel_S = librosa.feature.melspectrogram(S=np.abs(S), 
-                                                sr=sr,
-                                                n_mels=128)
-            #logger.info(f'mel_S type: {type(mel_S)}')
-
-            # Convert to log scale
+            mel_S = librosa.feature.melspectrogram(S=np.abs(S), sr=sr, n_mels=128)
             S_dB = librosa.power_to_db(mel_S, ref=np.max, top_db=80)
-            #logger.info(f'S_dB type is: {type(S_dB)}')
 
-            #logger.info(f'buffer type is: {type(buffer)}')
-            #logger.info(f'buffer shape is: {buffer.shape}')
+            # Check that S_dB exists
+            if S_dB is None:
+                warnings.warn('S_dB not found')
 
-            # cropping / padding audiospectrogram to constant shape
+            # hard cropping / padding audiospectrogram to constant shape
             sgram_shape = S_dB.shape
-            #logger.info(f'sgram shape is: {S_dB.shape} ----------------------------------------------------------------------------------')
 
             if (sgram_shape[1] > 184):
                 sgram = S_dB[:, :184]
-
-            if (sgram_shape[1] < 184):
+            elif (sgram_shape[1] < 184):
                 sgram = np.pad(S_dB, ((0, 0), (0, 184 - sgram_shape[1])), mode='constant')
-
-            #logger.info(f'sgram type is: {type(S_dB)}')
-            #logger.info(f'sgram shape is: {S_dB.shape}')
+            else:
+                sgram = S_dB
 
             return buffer, clip_indices, sgram
         
         except Exception as e:
-            warnings.warn(f'Failed to process audio: {str(e)}')
+            logger.info(f'Error is: \n{e}\n')
+            warnings.warn(f'Failed to process audio')
             return [], None, None
     
     def __len__(self):

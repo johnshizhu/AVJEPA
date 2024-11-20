@@ -48,6 +48,7 @@ from app.avjepa.utils import (
 )
 from app.vjepa.transforms import make_transforms
 
+debug = True
 
 # --
 log_timings = True
@@ -322,8 +323,8 @@ def main(args, resume_preempt=False):
 
     start_epoch = 0
     # -- load training checkpoint
-    logger.info("LOADING CHECKPOINTS")
     if load_model or os.path.exists(latest_path):
+        logger.info("LOADING CHECKPOINTS")
         (
             encoder,
             predictor,
@@ -364,7 +365,7 @@ def main(args, resume_preempt=False):
         except Exception as e:
             logger.info(f'Encountered exception when saving checkpoint: {e}')
 
-    #logger.info('Initializing loader...')
+    logger.info('Initializing loader...')
     loader = iter(unsupervised_loader)
     #logger.info(f'Loader type is: {type(loader)}')
 
@@ -380,7 +381,7 @@ def main(args, resume_preempt=False):
                 loader = iter(unsupervised_loader)
                 udata = next(loader)
 
-    #logger.info('Beginning Training Loop...')
+    logger.info('Beginning Training Loop...')
     # -- TRAINING LOOP
     for epoch in range(start_epoch, num_epochs):
         logger.info('Epoch %d' % (epoch + 1))
@@ -544,6 +545,15 @@ def main(args, resume_preempt=False):
                 with torch.no_grad():
                     for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters()):
                         param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
+
+                if debug:
+                    logger.info(f'loss is: {loss}')
+                    logger.info(f'loss_jepa is: {loss_jepa}')
+                    logger.info(f'loss_reg is: {loss_reg}')
+                    logger.info(f'_new_lr: {_new_lr}')
+                    logger.info(f'_new_wd: {_new_wd}')
+                    logger.info(f'STOP at end of first training step')
+                    print(1/0)
 
                 return (
                     float(loss),

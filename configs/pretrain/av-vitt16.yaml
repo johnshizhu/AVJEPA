@@ -29,7 +29,7 @@ data_aug:
   reprob: 0.0
 logging:
   folder: C:\Users\johns\OneDrive\Desktop\jepa_logs
-  write_tag: avjepaTiny-test2
+  write_tag: avjepaTiny-testav
 loss:
   loss_exp: 1.0
   reg_coeff: 0.0
@@ -59,7 +59,7 @@ mask:
     max_temporal_keep: 1.0
     max_keep: null
 meta:
-  load_checkpoint: True
+  load_checkpoint: False
   read_checkpoint: avjepaTiny-latest.pth.tar
   seed: 234
   eval_freq: 100
