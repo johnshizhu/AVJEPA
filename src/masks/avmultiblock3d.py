@@ -160,11 +160,11 @@ class _AVMaskGenerator(object):
         # --
         return v_mask
     
-    def _sample_block_mask_a(self, h=50, w=70):
-        top = torch.randint(0, self.a_size[0] - h + 1, (1,))
-        left = torch.randint(0, self.a_size[1] - w + 1, (1,))
+    def _sample_block_mask_a(self, h=4, w=6):
+        top = torch.randint(0, self.a_height - h + 1, (1,))
+        left = torch.randint(0, self.a_width - w + 1, (1,))
 
-        mask = torch.ones((self.a_size[0], self.a_size[1]), dtype=torch.int32)
+        mask = torch.ones((self.a_height, self.a_width), dtype=torch.int32)
         mask[top:top+h, left:left+w] = 0
 
         return mask
@@ -189,18 +189,20 @@ class _AVMaskGenerator(object):
         collated_masks_pred_v, collated_masks_enc_v = [], []
         collated_masks_pred_a, collated_masks_enc_a = [], []
         min_keep_enc_v = min_keep_pred_v = self.duration * self.height * self.width
-        min_keep_enc_a = min_keep_pred_a = self.a_size[0] * self.a_size[1]
+        min_keep_enc_a = min_keep_pred_a = self.a_height * self.a_width
         for _ in range(batch_size):
 
             empty_context = True
             while empty_context:
 
                 mask_e_v = torch.ones((self.duration, self.height, self.width), dtype=torch.int32)
-                mask_e_a = torch.ones((self.a_size[0], self.a_size[1]), dtype=torch.int32)
+                mask_e_a = torch.ones((self.a_height, self.a_width), dtype=torch.int32)
                 for _ in range(self.npred):
                     mask_e_v *= self._sample_block_mask_v(p_size)
                     mask_e_a *= self._sample_block_mask_a()
-                
+               
+                print(f"mask_e_v: {mask_e_v.shape}")
+                print(f"mask_e_a: {mask_e_a.shape}")
                 mask_e_v = mask_e_v.flatten()
                 mask_e_a = mask_e_a.flatten()
 

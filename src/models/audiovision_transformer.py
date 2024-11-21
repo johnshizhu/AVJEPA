@@ -15,6 +15,7 @@ from src.models.utils.patch_embed import PatchEmbed, PatchEmbed3D, AudioVisionPa
 from src.models.utils.modules import Block
 from src.models.utils.pos_embs import get_1d_sincos_pos_embed, get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_xy, get_3d_sincos_pos_embed
 from src.utils.tensors import trunc_normal_
+from src.masks.utils import av_apply_masks
 from src.masks.utils import apply_masks
 
 from logging import getLogger
@@ -216,8 +217,13 @@ class AudioVisionTransformer(nn.Module):
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
-            video_tokens = apply_masks(video_tokens, v_masks)
-            audio_tokens = apply_masks(audio_tokens, a_masks)
+            video_tokens = av_apply_masks(video_tokens, v_masks, modal=1)
+            logger.info(f'##post masking video_tokens shape is: {video_tokens.shape}')
+            
+
+        if masks is not None:
+            audio_tokens = av_apply_masks(audio_tokens, a_masks, modal=0)
+            logger.info(f'##post masking audio_tokens shape is: {audio_tokens.shape}')
             #masks = torch.cat(masks, dim=0)
 
         logger.info(f'post masking video_tokens shape is: {video_tokens.shape}')
