@@ -188,8 +188,18 @@ class AudioVisionTransformer(nn.Module):
         :param x: input image/video
         :param masks: indices of patch tokens to mask (remove)
         """
-        if masks is not None and not isinstance(masks, list):
-            masks = [masks]
+        v_masks = None
+        a_masks = None
+        if masks is not None:
+            v_masks = masks[0]
+            a_masks = masks[1]
+        if v_masks is not None and not isinstance(v_masks, list):
+            v_masks = [v_masks]
+        if a_masks is not None and not isinstance(a_masks, list):
+            a_masks = [a_masks]
+
+        logger.info(f'Input x shape is: {x.shape}')
+        logger.info(f'Input y shape is: {y.shape}')
 
         # Tokenize input
         video_pos_embed = self.video_pos_embed
@@ -201,21 +211,34 @@ class AudioVisionTransformer(nn.Module):
         video_tokens += video_pos_embed
         audio_tokens += audio_pos_embed
 
-        x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
-
-        B, N, D = x.shape
-
-        print(1/0)
+        logger.info(f'video_tokens shape is: {video_tokens.shape}')
+        logger.info(f'audio_tokens shape is: {audio_tokens.shape}')
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
-            x = apply_masks(x, masks)
-            masks = torch.cat(masks, dim=0)
+            video_tokens = apply_masks(video_tokens, v_masks)
+            audio_tokens = apply_masks(audio_tokens, a_masks)
+            #masks = torch.cat(masks, dim=0)
+
+        logger.info(f'post masking video_tokens shape is: {video_tokens.shape}')
+        logger.info(f'post masking audio_tokens shape is: {audio_tokens.shape}')
+
+        x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
+        logger.info(f'x shape is: {x.shape}')
 
         # Fwd prop
+        logger.info(f'starting forward prop...')
+        logger.info(f'masks type is: {type(masks)}')
+        if masks:
+            logger.info(f'masks len is: {len(masks)}')
+            logger.info(f'masks[0] shape is: {masks[0].shape}')
+            logger.info(f'masks[1] shape is: {masks[1].shape}')
         outs = []
+        logger.info(f'Starting x shape is: {x.shape}')
         for i, blk in enumerate(self.blocks):
+            logger.info(f'block {i}')
             x = blk(x, mask=masks)
+            logger.info(f'block {i} post x shape is: {x.shape}')
             if self.out_layers is not None and i in self.out_layers:
                 outs.append(self.norm(x))
 

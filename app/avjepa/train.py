@@ -29,7 +29,7 @@ from torch.nn import DataParallel
 
 from src.datasets.data_manager import init_data
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
-from src.masks.multiblock3d import MaskCollator as MB3DMaskCollator
+from src.masks.avmultiblock3d import AVMaskCollator as AVMB3DMaskCollator
 from src.masks.utils import apply_masks
 from src.utils.distributed import init_distributed, AllReduce
 from src.utils.logging import (
@@ -206,21 +206,6 @@ def main(args, resume_preempt=False):
     )
 
     # -- init model
-    # logger.info("Initializing models")
-    # logger.info(f"uniform_power: {uniform_power}")
-    # logger.info(f'use_mask_tokens: {use_mask_tokens}')
-    # logger.info(f'num_mask_tokens: {len(cfgs_mask)}')
-    # logger.info(f'zero_init_mask_tokens: {zero_init_mask_tokens}')
-    # logger.info(f'device: {device}')
-    # logger.info(f'patch_size: {patch_size}')
-    # logger.info(f'num_frames: {num_frames}')
-    # logger.info(f'tubelet_size: {tubelet_size}')
-    # logger.info(f'model_name: {model_name}')
-    # logger.info(f'crop_size: {crop_size}')
-    # logger.info(f'pred_depth: {pred_depth}')
-    # logger.info(f'pred_embed_dim: {pred_embed_dim}')
-    # logger.info(f'use_sdpa: {use_sdpa}')
-    # print(1/0)
     encoder, predictor = init_audio_video_model(
         uniform_power=uniform_power,
         use_mask_tokens=use_mask_tokens,
@@ -240,8 +225,8 @@ def main(args, resume_preempt=False):
 
     # -- make data transforms
     if mask_type == 'multiblock3d':
-        logger.info('Initializing basic multi-block mask')
-        mask_collator = MB3DMaskCollator(
+        logger.info('Initializing basic AV multi-block mask')
+        mask_collator = AVMB3DMaskCollator(
             crop_size=crop_size,
             num_frames=num_frames,
             patch_size=patch_size,
@@ -286,14 +271,13 @@ def main(args, resume_preempt=False):
          pin_mem=pin_mem,
          rank=rank,
          log_dir=folder if log_resource_util_data else None)
-    #logger.info(f'init_data complete...')
     try:
         _dlen = len(unsupervised_loader)
     except Exception:  # Different interface for webdataset
         _dlen = unsupervised_loader.num_batches
     if ipe is None:
         ipe = _dlen
-    logger.info(f'iterations per epoch/dataest length: {ipe}/{_dlen}')
+    logger.info(f'iterations per epoch/dataset length: {ipe}/{_dlen}')
 
     # -- init optimizer and scheduler
     optimizer, scaler, scheduler, wd_scheduler = init_opt(
@@ -402,12 +386,24 @@ def main(args, resume_preempt=False):
             #logger.info(f'Beginning Iteration {itr}...')
             itr_start_time = time.time()
             try:
-                udata, masks_enc, masks_pred = next(loader)
+                udata, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = next(loader)
             except Exception:
                 logger.info('Exhausted data loaders. Refreshing...')
                 loader = iter(unsupervised_loader)
-                udata, masks_enc, masks_pred = next(loader)
-            assert len(masks_enc) == len(masks_pred), \
+                udata, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = next(loader)
+            # logger.info(f'vmasks_enc len is: {len(masks_enc_v)}')
+            # logger.info(f'vmasks_pred len is: {len(masks_pred_v)}')
+            # logger.info(f'vmasks_enc[0] shape is: {masks_enc_v[0].shape}')
+            # logger.info(f'vmasks_pred[0] shape is: {masks_pred_v[0].shape}')
+            # logger.info(f'vmasks_enc[1] shape is: {masks_enc_v[1].shape}')
+            # logger.info(f'vmasks_pred[1] shape is: {masks_pred_v[1].shape}')
+
+            # logger.info(f'amasks_enc[0] shape is: {masks_enc_a[0].shape}')
+            # logger.info(f'amasks_pred[0] shape is: {masks_pred_a[0].shape}')
+            # logger.info(f'amasks_enc[1] shape is: {masks_enc_a[1].shape}')
+            # logger.info(f'amasks_pred[1] shape is: {masks_pred_a[1].shape}')
+
+            assert len(masks_enc_v) == len(masks_pred_v), \
                 'Currently require num encoder masks = num predictor masks'
             def load_clips():
                 # -- unsupervised video clips
@@ -417,46 +413,30 @@ def main(args, resume_preempt=False):
 
                 # Put each mask-enc/mask-pred pair on the GPU and reuse the
                 # same mask pair for each clip
-                _masks_enc, _masks_pred = [], []
-                for _me, _mp in zip(masks_enc, masks_pred):
+                _masks_enc_v, _masks_pred_v = [], []
+                _masks_enc_a, _masks_pred_a = [], []
+
+                for _me, _mp in zip(masks_enc_v, masks_pred_v):
                     _me = _me.to(device, non_blocking=True)
                     _mp = _mp.to(device, non_blocking=True)
                     _me = repeat_interleave_batch(_me, batch_size, repeat=num_clips)
                     _mp = repeat_interleave_batch(_mp, batch_size, repeat=num_clips)
-                    _masks_enc.append(_me)
-                    _masks_pred.append(_mp)
+                    _masks_enc_v.append(_me)
+                    _masks_pred_v.append(_mp)
+                for _me, _mp in zip(masks_enc_a, masks_pred_a):
+                    _me = _me.to(device, non_blocking=True)
+                    _mp = _mp.to(device, non_blocking=True)
+                    _me = repeat_interleave_batch(_me, batch_size, repeat=num_clips)
+                    _mp = repeat_interleave_batch(_mp, batch_size, repeat=num_clips)
+                    _masks_enc_a.append(_me)
+                    _masks_pred_a.append(_mp)
             
-                return (clips, _masks_enc, _masks_pred)
+                return (clips, _masks_enc_v, _masks_enc_a, _masks_pred_v, _masks_pred_v)
 
-            # logger.info(f'udata length is: {len(udata)}')
-            # logger.info(f'udata[0] len is: {len(udata[0])}')
-            # logger.info(f'udata[1] shape is: {udata[1].shape}')
-            # logger.info(f'udata[2] len is: {len(udata[2])}')
-            # logger.info(f'udata[0][0] shape is: {udata[0][0].shape}')
-            # logger.info(f'udata[2][0] shape is: {udata[2][0].shape}')
-            # logger.info(f'udata[3] shape is: {udata[3].shape}')
-
-            # logger.info(f'masks_enc type is: {type(masks_enc)}')
-            # logger.info(f'masks_pred type is: {type(masks_pred)}')
-
-
-            clips, masks_enc, masks_pred = load_clips()
-
-
-            # print("\n")
-            # logger.info(f'clips shape is: {clips.shape}')
-            # logger.info(f'masks_enc length is: {len(masks_enc)}')
-            # logger.info(f'masks_enc[0] shape is: {masks_enc[0].shape}')
-            # logger.info(f'masks_enc[1] shape is: {masks_enc[1].shape}')
-            # logger.info(f'masks_pred length is: {len(masks_pred)}')
-            # logger.info(f'masks_pred[0] shape is: {masks_pred[0].shape}')
-            # logger.info(f'masks_pred[1] shape is: {masks_pred[1].shape}')
-            # print("\n")
-
-            # At this point the video has not been altered in any way
+            clips, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = load_clips()
 
             for _i, m in enumerate(mask_meters):
-                m.update(masks_enc[_i][0].size(-1))
+                m.update(masks_enc_v[_i][0].size(-1))
 
             # Audiospectrogram Data Edit
             asgram = udata[3].unsqueeze(1)
@@ -473,12 +453,10 @@ def main(args, resume_preempt=False):
                     mask-pred.
                     """
                     with torch.no_grad():
-                        #logger.info("Forward Target...")
-                        #logger.info(f'target_encoder type is: {type(target_encoder)}')
                         h = target_encoder(c, a)
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
-                        h = apply_masks(h, masks_pred, concat=False)
+                        h = apply_masks(h, masks_pred_v, concat=False) # FIXME here
                         return h
 
                 def forward_context(c, a, h):
@@ -486,10 +464,8 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    #logger.info("Forward Context...")
-                    z = encoder(c, a, masks_enc)
-                    #logger.info("Predictor...")
-                    z = predictor(z, h, masks_enc, masks_pred)
+                    z = encoder(c, a, [masks_enc_v, masks_enc_a]) # applying both v&a token masks
+                    z = predictor(z, h, [masks_enc_v, masks_pred_v]) # FIXME here
                     return z
 
                 def loss_fn(z, h):
@@ -497,7 +473,7 @@ def main(args, resume_preempt=False):
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
-                    loss /= len(masks_pred)
+                    loss /= len(masks_pred_v)
                     return loss
 
                 def reg_fn(z):
@@ -510,14 +486,17 @@ def main(args, resume_preempt=False):
                     #logger.info(f'c type is: {type(clips)}')
                     #logger.info(f'c shape is: {clips.shape}\n')
                     h = forward_target(clips, asgram)
-                    #logger.info(f'forward_target done')
+                    logger.info(f'forward_target done')
                     z = forward_context(clips, asgram, h)
-                    #logger.info(f'forward_context done')
+                    logger.info(f'forward_context done')
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
-                #logger.info(f'Loss is: {loss}')
+
+                
+                logger.info(f'Loss is: {loss}')
+                print(1/0)
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.
                 if mixed_precision:
