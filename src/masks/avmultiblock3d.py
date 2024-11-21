@@ -188,7 +188,8 @@ class _AVMaskGenerator(object):
 
         collated_masks_pred_v, collated_masks_enc_v = [], []
         collated_masks_pred_a, collated_masks_enc_a = [], []
-        min_keep_enc = min_keep_pred = self.duration * self.height * self.width
+        min_keep_enc_v = min_keep_pred_v = self.duration * self.height * self.width
+        min_keep_enc_a = min_keep_pred_a = self.a_size[0] * self.a_size[1]
         for _ in range(batch_size):
 
             empty_context = True
@@ -213,24 +214,26 @@ class _AVMaskGenerator(object):
 
                 empty_context = len(mask_e_v) == 0
                 if not empty_context:
-                    min_keep_pred = min(min_keep_pred, len(mask_p_v))
-                    min_keep_enc = min(min_keep_enc, len(mask_e_v))
+                    min_keep_pred_v = min(min_keep_pred_v, len(mask_p_v))
+                    min_keep_enc_v = min(min_keep_enc_v, len(mask_e_v))
+                    min_keep_pred_a = min(min_keep_pred_a, len(mask_p_a))
+                    min_keep_enc_a = min(min_keep_enc_a, len(mask_e_a))
                     collated_masks_pred_v.append(mask_p_v)
                     collated_masks_enc_v.append(mask_e_v)
                     collated_masks_pred_a.append(mask_p_a)
                     collated_masks_enc_a.append(mask_e_a)
 
         if self.max_keep is not None:
-            min_keep_enc = min(min_keep_enc, self.max_keep)
+            min_keep_enc_v = min(min_keep_enc_v, self.max_keep)
 
-        collated_masks_pred_v = [cm[:min_keep_pred] for cm in collated_masks_pred_v]
+        collated_masks_pred_v = [cm[:min_keep_pred_v] for cm in collated_masks_pred_v]
         collated_masks_pred_v = torch.utils.data.default_collate(collated_masks_pred_v)
-        collated_masks_pred_a = [cm[:min_keep_pred] for cm in collated_masks_pred_a]
+        collated_masks_pred_a = [cm[:min_keep_pred_a] for cm in collated_masks_pred_a]
         collated_masks_pred_a = torch.utils.data.default_collate(collated_masks_pred_a)
         # --
-        collated_masks_enc_v = [cm[:min_keep_enc] for cm in collated_masks_enc_v]
+        collated_masks_enc_v = [cm[:min_keep_enc_v] for cm in collated_masks_enc_v]
         collated_masks_enc_v = torch.utils.data.default_collate(collated_masks_enc_v)
-        collated_masks_enc_a = [cm[:min_keep_enc] for cm in collated_masks_enc_a]
+        collated_masks_enc_a = [cm[:min_keep_enc_a] for cm in collated_masks_enc_a]
         collated_masks_enc_a = torch.utils.data.default_collate(collated_masks_enc_a)
 
         return collated_masks_enc_v, collated_masks_enc_a, collated_masks_pred_v, collated_masks_pred_a

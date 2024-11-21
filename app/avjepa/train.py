@@ -391,17 +391,18 @@ def main(args, resume_preempt=False):
                 logger.info('Exhausted data loaders. Refreshing...')
                 loader = iter(unsupervised_loader)
                 udata, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = next(loader)
-            # logger.info(f'vmasks_enc len is: {len(masks_enc_v)}')
-            # logger.info(f'vmasks_pred len is: {len(masks_pred_v)}')
-            # logger.info(f'vmasks_enc[0] shape is: {masks_enc_v[0].shape}')
-            # logger.info(f'vmasks_pred[0] shape is: {masks_pred_v[0].shape}')
-            # logger.info(f'vmasks_enc[1] shape is: {masks_enc_v[1].shape}')
-            # logger.info(f'vmasks_pred[1] shape is: {masks_pred_v[1].shape}')
 
-            # logger.info(f'amasks_enc[0] shape is: {masks_enc_a[0].shape}')
-            # logger.info(f'amasks_pred[0] shape is: {masks_pred_a[0].shape}')
-            # logger.info(f'amasks_enc[1] shape is: {masks_enc_a[1].shape}')
-            # logger.info(f'amasks_pred[1] shape is: {masks_pred_a[1].shape}')
+            logger.info(f'vmasks_enc len is: {len(masks_enc_v)}')
+            logger.info(f'vmasks_pred len is: {len(masks_pred_v)}')
+            logger.info(f'vmasks_enc[0] shape is: {masks_enc_v[0].shape}')
+            logger.info(f'vmasks_pred[0] shape is: {masks_pred_v[0].shape}')
+            logger.info(f'vmasks_enc[1] shape is: {masks_enc_v[1].shape}')
+            logger.info(f'vmasks_pred[1] shape is: {masks_pred_v[1].shape}')
+
+            logger.info(f'amasks_enc[0] shape is: {masks_enc_a[0].shape}')
+            logger.info(f'amasks_pred[0] shape is: {masks_pred_a[0].shape}')
+            logger.info(f'amasks_enc[1] shape is: {masks_enc_a[1].shape}')
+            logger.info(f'amasks_pred[1] shape is: {masks_pred_a[1].shape}')
 
             assert len(masks_enc_v) == len(masks_pred_v), \
                 'Currently require num encoder masks = num predictor masks'
