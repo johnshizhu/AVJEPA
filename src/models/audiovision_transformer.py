@@ -15,8 +15,7 @@ from src.models.utils.patch_embed import PatchEmbed, PatchEmbed3D, AudioVisionPa
 from src.models.utils.modules import Block
 from src.models.utils.pos_embs import get_1d_sincos_pos_embed, get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_xy, get_3d_sincos_pos_embed
 from src.utils.tensors import trunc_normal_
-from src.masks.utils import av_apply_masks
-from src.masks.utils import apply_masks
+from src.masks.utils import apply_masks, target_apply_masks
 
 from logging import getLogger
 
@@ -189,18 +188,17 @@ class AudioVisionTransformer(nn.Module):
         :param x: input image/video
         :param masks: indices of patch tokens to mask (remove)
         """
+
         v_masks = None
         a_masks = None
         if masks is not None:
             v_masks = masks[0]
             a_masks = masks[1]
+
         if v_masks is not None and not isinstance(v_masks, list):
             v_masks = [v_masks]
         if a_masks is not None and not isinstance(a_masks, list):
             a_masks = [a_masks]
-
-        logger.info(f'Input x shape is: {x.shape}')
-        logger.info(f'Input y shape is: {y.shape}')
 
         # Tokenize input
         video_pos_embed = self.video_pos_embed
@@ -212,39 +210,30 @@ class AudioVisionTransformer(nn.Module):
         video_tokens += video_pos_embed
         audio_tokens += audio_pos_embed
 
-        logger.info(f'video_tokens shape is: {video_tokens.shape}')
-        logger.info(f'audio_tokens shape is: {audio_tokens.shape}')
+        logger.info(f'video_tokens shape: {video_tokens.shape}')
+        logger.info(f'audio_tokens shape: {audio_tokens.shape}')
+
+        if v_masks is not None:
+            for i, m in enumerate(v_masks):
+                logger.info(f'v_masks[{i}] shape: {m.shape}')
+            for i, m in enumerate(a_masks):
+                logger.info(f'a_masks[{i}] shape: {m.shape}')
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
-            video_tokens = av_apply_masks(video_tokens, v_masks, modal=1)
-            logger.info(f'##post masking video_tokens shape is: {video_tokens.shape}')
-            
+            video_tokens = target_apply_masks(video_tokens, v_masks)
+            audio_tokens = target_apply_masks(audio_tokens, a_masks)
 
-        if masks is not None:
-            audio_tokens = av_apply_masks(audio_tokens, a_masks, modal=0)
-            logger.info(f'##post masking audio_tokens shape is: {audio_tokens.shape}')
-            #masks = torch.cat(masks, dim=0)
-
-        logger.info(f'post masking video_tokens shape is: {video_tokens.shape}')
-        logger.info(f'post masking audio_tokens shape is: {audio_tokens.shape}')
+        logger.info(f'video_tokens shape post masking: {video_tokens.shape}')
+        logger.info(f'audio_tokens shape post masking: {audio_tokens.shape}')
 
         x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
-        logger.info(f'x shape is: {x.shape}')
+        logger.info(f'multi-modal input shape: {x.shape}')
 
         # Fwd prop
-        logger.info(f'starting forward prop...')
-        logger.info(f'masks type is: {type(masks)}')
-        if masks:
-            logger.info(f'masks len is: {len(masks)}')
-            logger.info(f'masks[0] shape is: {masks[0].shape}')
-            logger.info(f'masks[1] shape is: {masks[1].shape}')
         outs = []
-        logger.info(f'Starting x shape is: {x.shape}')
         for i, blk in enumerate(self.blocks):
-            logger.info(f'block {i}')
             x = blk(x, mask=masks)
-            logger.info(f'block {i} post x shape is: {x.shape}')
             if self.out_layers is not None and i in self.out_layers:
                 outs.append(self.norm(x))
 

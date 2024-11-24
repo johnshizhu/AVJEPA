@@ -14,7 +14,7 @@ import yaml
 import torch
 
 import src.models.audiovision_transformer as video_vit
-import src.models.predictor as vit_pred
+import src.models.audiovisionpredictor as av_vit_pred
 from src.models.utils.multimask import MultiMaskWrapper, AudioVideoMultiMaskWrapper, PredictorMultiMaskWrapper
 from src.utils.schedulers import (
     WarmupCosineSchedule,
@@ -109,7 +109,7 @@ def init_audio_video_model(
     logger.info(f'PRE MASK WRAPPER')
     encoder = AudioVideoMultiMaskWrapper(encoder)
     logger.info(f'POST MASK WRAPPER')
-    predictor = vit_pred.__dict__['vit_predictor'](
+    predictor = av_vit_pred.__dict__['vit_avpredictor'](
         img_size=crop_size,
         use_mask_tokens=use_mask_tokens,
         patch_size=patch_size,
@@ -143,6 +143,8 @@ def init_audio_video_model(
 
     encoder.to(device)
     predictor.to(device)
+    logger.info("CREATED AV ENCODER")
+    logger.info("CREATED AV PREDICTOR")
     logger.info(encoder)
     logger.info(predictor)
 
@@ -178,7 +180,7 @@ def init_audiovideo_model(
         use_sdpa=use_sdpa,
     )
     encoder = MultiMaskWrapper(encoder)
-    predictor = vit_pred.__dict__['vit_predictor'](
+    predictor = av_vit_pred.__dict__['vit_predictor'](
         img_size=crop_size,
         use_mask_tokens=use_mask_tokens,
         patch_size=patch_size,

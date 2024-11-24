@@ -1,10 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 import math
 from functools import partial
 
@@ -12,20 +5,22 @@ import torch
 import torch.nn as nn
 
 from src.models.utils.modules import Block
-from src.models.utils.pos_embs import get_2d_sincos_pos_embed, get_3d_sincos_pos_embed
+from src.models.utils.pos_embs import get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_xy, get_3d_sincos_pos_embed
 from src.utils.tensors import (
     trunc_normal_,
     repeat_interleave_batch
 )
 from src.masks.utils import apply_masks
+
 from logging import getLogger
 logger = getLogger()
 
-class VisionTransformerPredictor(nn.Module):
+class AudioVisionTransformerPredictor(nn.Module):
     """ Vision Transformer """
     def __init__(
         self,
         img_size=224,
+        a_size=(128,192),
         patch_size=16,
         num_frames=1,
         tubelet_size=2,
@@ -48,7 +43,8 @@ class VisionTransformerPredictor(nn.Module):
     ):
         super().__init__()
         # Map input to predictor dimension
-        self.predictor_embed = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
+        self.predictor_embed_v = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
+        self.predictor_embed_a = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
 
         # Mask tokens
         self.mask_tokens = None
@@ -71,22 +67,26 @@ class VisionTransformerPredictor(nn.Module):
         grid_size = self.input_size // self.patch_size
         grid_depth = self.num_frames // self.tubelet_size
 
-        if self.is_video:
-            self.num_patches = num_patches = (
-                (num_frames // tubelet_size)
-                * (img_size // patch_size)
-                * (img_size // patch_size)
-            )
-        else:
-            self.num_patches = num_patches = (
-                (img_size // patch_size)
-                * (img_size // patch_size)
-            )
+        a_height = a_size[0] // self.patch_size
+        a_width  = a_size[1] // self.patch_size
+
+        self.num_patches = num_patches = (
+            (num_frames // tubelet_size)
+            * (img_size // patch_size)
+            * (img_size // patch_size)
+        )
+
+        num_patches_a = a_height * a_width
+
         # Position embedding
         self.uniform_power = uniform_power
-        self.predictor_pos_embed = None
-        self.predictor_pos_embed = nn.Parameter(
+        self.predictor_pos_embed_v = None
+        self.predictor_pos_embed_a = None
+        self.predictor_pos_embed_v = nn.Parameter(
             torch.zeros(1, num_patches, predictor_embed_dim),
+            requires_grad=False)
+        self.predictor_pos_embed_a = nn.Parameter(
+            torch.zeros(1, num_patches_a, predictor_embed_dim),
             requires_grad=False)
 
         # Attention Blocks
@@ -110,8 +110,10 @@ class VisionTransformerPredictor(nn.Module):
         self.predictor_proj = nn.Linear(predictor_embed_dim, embed_dim, bias=True)
 
         # ------ initialize weights
-        if self.predictor_pos_embed is not None:
-            self._init_pos_embed(self.predictor_pos_embed.data)  # sincos pos-embed
+        if self.predictor_pos_embed_v is not None:
+            self._init_video_pos_embed(self.predictor_pos_embed_v.data)  # sincos pos-embed
+        if self.predictor_pos_embed_a is not None:
+            self._init_audio_pos_embed(self.predictor_pos_embed_a.data)
         self.init_std = init_std
         if not zero_init_mask_tokens:
             for mt in self.mask_tokens:
@@ -119,8 +121,8 @@ class VisionTransformerPredictor(nn.Module):
         self.apply(self._init_weights)
         self._rescale_blocks()
 
-    def _init_pos_embed(self, pos_embed):
-        embed_dim = pos_embed.size(-1)
+    def _init_video_pos_embed(self, video_pos_embed):
+        embed_dim = video_pos_embed.size(-1)
         grid_size = self.input_size // self.patch_size
         if self.is_video:
             grid_depth = self.num_frames // self.tubelet_size
@@ -133,7 +135,22 @@ class VisionTransformerPredictor(nn.Module):
             )
         else:
             sincos = get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False)
-        pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+        video_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+
+    def _init_audio_pos_embed(self, audio_pos_embed):
+        embed_dim = audio_pos_embed.size(-1)
+        # based on current implementation, audiospectrogram is always 128 by 192
+        grid_h = 128 // self.patch_size
+        grid_w = 192 // self.patch_size
+        
+        sincos = get_2d_sincos_pos_embed_xy(
+            embed_dim,
+            grid_h,
+            grid_w,
+            cls_token=False
+        )
+        
+        audio_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -179,31 +196,43 @@ class VisionTransformerPredictor(nn.Module):
         :param masks_ctxt: indices of context tokens in input
         :params masks_tgt: indices of target tokens in input
         """
-
-        for i, m in enumerate(masks_ctxt):
-            logger.info(f'ctxt_masks[{i}] shape: {m.shape}')
-        for i, m in enumerate(masks_tgt):
-            logger.info(f'masks_tgt[{i}] shape: {m.shape}')
-
+        # -- video and audio tokens extraction
         assert (masks_ctxt is not None) and (masks_tgt is not None), 'Cannot run predictor without mask indices'
 
-        if not isinstance(masks_ctxt, list):
-            masks_ctxt = [masks_ctxt]
+        ctxt_v, ctxt_a = ctxt
+        tgt_v,  tgt_a  = tgt
 
-        if not isinstance(masks_tgt, list):
-            masks_tgt = [masks_tgt]
+        logger.info(f'ctxt_v.shape: {ctxt_v.shape}')
+        logger.info(f'ctxt_a.shape: {ctxt_a.shape}')
+        logger.info(f'tgt_v.shape: {tgt_v.shape}')
+        logger.info(f'tgt_a.shape: {tgt_a.shape}')
+
+        masks_ctxt_v, masks_ctxt_a = masks_ctxt[0], masks_ctxt[1]
+        masks_tgt_v, masks_tgt_a = masks_tgt[0], masks_tgt[1]
+
+        if not isinstance(masks_ctxt_v, list):
+            masks_ctxt_v = [masks_ctxt_v]
+        if not isinstance(masks_ctxt_a, list):
+            masks_ctxt_a = [masks_ctxt_a]
+        if not isinstance(masks_ctxt, list):
+            masks_tgt_v = [masks_tgt_v]
+        if not isinstance(masks_tgt_a, list):
+            masks_tgt_a = [masks_tgt_a]
 
         # Batch Size
-        B = len(ctxt) // len(masks_ctxt)
+        B = len(ctxt) // len(masks_ctxt_v)
 
-        # Map context tokens to pedictor dimensions
-        x = self.predictor_embed(ctxt)
+        # Map context tokens to predictor dimensions
+        x_v = self.predictor_embed_v(ctxt_v)
+        x_a = self.predictor_embed_a(ctxt_a)
         _, N_ctxt, D = x.shape
 
         # Add positional embedding to ctxt tokens
-        if self.predictor_pos_embed is not None:
-            ctxt_pos_embed = self.predictor_pos_embed.repeat(B, 1, 1)
-            x += apply_masks(ctxt_pos_embed, masks_ctxt)
+        if self.predictor_pos_embed_v is not None:
+            ctxt_pos_embed_v = self.predictor_pos_embed_v.repeat(B, 1, 1)
+            ctxt_pos_embed_a = self.predictor_pos_embed_a.repeat(B, 1, 1)
+            x += apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
+            
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens is None:
@@ -216,8 +245,8 @@ class VisionTransformerPredictor(nn.Module):
             pred_tokens = apply_masks(pred_tokens, masks_tgt)
 
         # Add positional embedding to target tokens
-        if self.predictor_pos_embed is not None:
-            pos_embs = self.predictor_pos_embed.repeat(B, 1, 1)
+        if self.predictor_pos_embed_v is not None:
+            pos_embs = self.predictor_pos_embed_v.repeat(B, 1, 1)
             pos_embs = apply_masks(pos_embs, masks_tgt)
             pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt))
             pred_tokens += pos_embs
@@ -245,11 +274,8 @@ class VisionTransformerPredictor(nn.Module):
         return x
 
 
-def vit_predictor(**kwargs):
-    model = VisionTransformerPredictor(
+def vit_avpredictor(**kwargs):
+    model = AudioVisionTransformerPredictor(
         mlp_ratio=4, qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         **kwargs)
     return model
-
-
-

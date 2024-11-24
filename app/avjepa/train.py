@@ -30,7 +30,7 @@ from torch.nn import DataParallel
 from src.datasets.data_manager import init_data
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
 from src.masks.avmultiblock3d import AVMaskCollator as AVMB3DMaskCollator
-from src.masks.utils import apply_masks
+from src.masks.utils import apply_masks, target_apply_masks, get_pred_masks
 from src.utils.distributed import init_distributed, AllReduce
 from src.utils.logging import (
     CSVLogger,
@@ -392,18 +392,6 @@ def main(args, resume_preempt=False):
                 loader = iter(unsupervised_loader)
                 udata, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = next(loader)
 
-            logger.info(f'vmasks_enc len is: {len(masks_enc_v)}')
-            logger.info(f'vmasks_pred len is: {len(masks_pred_v)}')
-            logger.info(f'vmasks_enc[0] shape is: {masks_enc_v[0].shape}')
-            logger.info(f'vmasks_pred[0] shape is: {masks_pred_v[0].shape}')
-            logger.info(f'vmasks_enc[1] shape is: {masks_enc_v[1].shape}')
-            logger.info(f'vmasks_pred[1] shape is: {masks_pred_v[1].shape}')
-
-            logger.info(f'amasks_enc[0] shape is: {masks_enc_a[0].shape}')
-            logger.info(f'amasks_pred[0] shape is: {masks_pred_a[0].shape}')
-            logger.info(f'amasks_enc[1] shape is: {masks_enc_a[1].shape}')
-            logger.info(f'amasks_pred[1] shape is: {masks_pred_a[1].shape}')
-
             assert len(masks_enc_v) == len(masks_pred_v), \
                 'Currently require num encoder masks = num predictor masks'
             def load_clips():
@@ -432,12 +420,15 @@ def main(args, resume_preempt=False):
                     _masks_enc_a.append(_me)
                     _masks_pred_a.append(_mp)
             
-                return (clips, _masks_enc_v, _masks_enc_a, _masks_pred_v, _masks_pred_v)
+                return (clips, _masks_enc_v, _masks_enc_a, _masks_pred_v, _masks_pred_a)
 
             clips, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = load_clips()
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc_v[_i][0].size(-1))
+            
+            torch.set_printoptions(threshold=100000)
+            torch.set_printoptions(linewidth=200)
 
             # Audiospectrogram Data Edit
             asgram = udata[3].unsqueeze(1)
@@ -453,20 +444,46 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
+                    logger.info(f'-------FORWARD TARGET-------')
                     with torch.no_grad():
                         h = target_encoder(c, a)
-                        h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
-                        # -- create targets (masked regions of h)
-                        h = apply_masks(h, masks_pred_v, concat=False) # FIXME here
-                        return h
+                        logger.info(f'target_encoder output shape: {h.shape}')
+                        h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]                        
+                        video_tokens, audio_tokens = torch.split(h, [1568, 96], dim=1)
+                        
+                        # -- masking pred tokens
+                        for i, m in enumerate(masks_pred_v):
+                            logger.info(f'masks_pred_v[{i}] shape: {m.shape}')
+                        for i, m in enumerate(masks_pred_a):
+                            logger.info(f'masks_pred_a[{i}] shape: {m.shape}')
+                        h_v = apply_masks(video_tokens, masks_pred_v)
+                        h_a = apply_masks(audio_tokens, masks_pred_a)
 
-                def forward_context(c, a, h):
+                        logger.info(f'h_v shape: {h_v.shape}')
+                        logger.info(f'h_a shape: {h_a.shape}')
+
+                        h = torch.cat([h_v, h_a], dim=1)
+                        logger.info(f'target result shape: {h.shape}')
+                        return h_v, h_a, h
+
+                def forward_context(c, a, h_v, h_a):
                     """
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    z = encoder(c, a, [masks_enc_v, masks_enc_a]) # applying both v&a token masks
-                    z = predictor(z, h, [masks_enc_v, masks_pred_v]) # FIXME here
+                    logger.info(f'-------FORWARD CONTEXT-------')
+                    z = encoder(c, a, (masks_enc_v, masks_enc_a)) # applying both v&a token masks
+                    logger.info(f'context result shape: {z[0].shape}')
+                    c_v_t = torch.zeros(batch_size, 1568, 192, device=device)
+                    c_a_t = torch.zeros(batch_size, 96, 192, device=device)
+                    m_c_v_t = target_apply_masks(c_v_t, masks_enc_v)
+                    m_c_a_t = target_apply_masks(c_a_t, masks_enc_a)
+                    _, v_size, _ = m_c_v_t.shape
+                    _, a_size, _ = m_c_a_t.shape
+                    z_v, z_a = torch.split(z[0], [v_size, a_size], dim=1)
+
+                    logger.info(f'-------FORWARD PREDICTOR-------')
+                    z = predictor((z_v, z_a), (h_v, h_a), (masks_enc_v, masks_enc_a), (masks_pred_v, masks_pred_a)) # FIXME here
                     return z
 
                 def loss_fn(z, h):
@@ -484,18 +501,14 @@ def main(args, resume_preempt=False):
                 #logger.info('Beginning Forward Pass...')
                 loss_jepa, loss_reg = 0., 0.
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
-                    #logger.info(f'c type is: {type(clips)}')
-                    #logger.info(f'c shape is: {clips.shape}\n')
-                    h = forward_target(clips, asgram)
-                    logger.info(f'forward_target done')
-                    z = forward_context(clips, asgram, h)
-                    logger.info(f'forward_context done')
+                    h_v, h_a, h = forward_target(clips, asgram)
+                    logger.info(f'forward_target final out shape: {h.shape}')
+                    z = forward_context(clips, asgram, h_v, h_a)
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
 
-                
                 logger.info(f'Loss is: {loss}')
                 print(1/0)
                 # Step 2. Backward & step

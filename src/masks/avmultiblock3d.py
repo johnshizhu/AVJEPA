@@ -188,54 +188,47 @@ class _AVMaskGenerator(object):
 
         collated_masks_pred_v, collated_masks_enc_v = [], []
         collated_masks_pred_a, collated_masks_enc_a = [], []
-        min_keep_enc_v = min_keep_pred_v = self.duration * self.height * self.width
-        min_keep_enc_a = min_keep_pred_a = self.a_height * self.a_width
-        for _ in range(batch_size):
+        #min_keep_enc_v = min_keep_pred_v = self.duration * self.height * self.width
+        #min_keep_enc_a = min_keep_pred_a = self.a_height * self.a_width
+        # for _ in range(batch_size)
+        #for _ in range(self.npred): # number of masks per batch
 
-            empty_context = True
-            while empty_context:
+        mask_e_v = torch.ones((self.duration, self.height, self.width), dtype=torch.int32)
+        mask_e_a = torch.ones((self.a_height, self.a_width), dtype=torch.int32)
+        mask_e_v *= self._sample_block_mask_v(p_size)
+        mask_e_a *= self._sample_block_mask_a()
+        
+        mask_e_v = mask_e_v.flatten()
+        mask_e_a = mask_e_a.flatten()
 
-                mask_e_v = torch.ones((self.duration, self.height, self.width), dtype=torch.int32)
-                mask_e_a = torch.ones((self.a_height, self.a_width), dtype=torch.int32)
-                for _ in range(self.npred):
-                    mask_e_v *= self._sample_block_mask_v(p_size)
-                    mask_e_a *= self._sample_block_mask_a()
-               
-                print(f"mask_e_v: {mask_e_v.shape}")
-                print(f"mask_e_a: {mask_e_a.shape}")
-                mask_e_v = mask_e_v.flatten()
-                mask_e_a = mask_e_a.flatten()
+        # predictor mask -- vector of INDICES where the mask is 0
+        mask_p_v = torch.argwhere(mask_e_v == 0).squeeze()
+        mask_p_a = torch.argwhere(mask_e_a == 0).squeeze()
+        
+        # encoder mask -- vector of INDICES where mask is 1
+        mask_e_v = torch.nonzero(mask_e_v).squeeze()
+        mask_e_a = torch.nonzero(mask_e_a).squeeze()
 
-                # predictor mask
-                mask_p_v = torch.argwhere(mask_e_v == 0).squeeze()
-                mask_p_a = torch.argwhere(mask_e_a == 0).squeeze()
-                
-                # encoder mask
-                mask_e_v = torch.nonzero(mask_e_v).squeeze()
-                mask_e_a = torch.nonzero(mask_e_a).squeeze()
+        # replicate along batch size
+        mask_p_v = mask_p_v.unsqueeze(0).repeat(batch_size, 1)
+        mask_p_a = mask_p_a.unsqueeze(0).repeat(batch_size, 1)
+        mask_e_v = mask_e_v.unsqueeze(0).repeat(batch_size, 1)
+        mask_e_a = mask_e_a.unsqueeze(0).repeat(batch_size, 1)
 
-                empty_context = len(mask_e_v) == 0
-                if not empty_context:
-                    min_keep_pred_v = min(min_keep_pred_v, len(mask_p_v))
-                    min_keep_enc_v = min(min_keep_enc_v, len(mask_e_v))
-                    min_keep_pred_a = min(min_keep_pred_a, len(mask_p_a))
-                    min_keep_enc_a = min(min_keep_enc_a, len(mask_e_a))
-                    collated_masks_pred_v.append(mask_p_v)
-                    collated_masks_enc_v.append(mask_e_v)
-                    collated_masks_pred_a.append(mask_p_a)
-                    collated_masks_enc_a.append(mask_e_a)
+        #collated_masks_pred_v = torch.utils.data.default_collate(collated_masks_pred_v)
+        #collated_masks_pred_a = torch.utils.data.default_collate(collated_masks_pred_a)
+        #collated_masks_enc_v = torch.utils.data.default_collate(collated_masks_enc_v)
+        #collated_masks_enc_a = torch.utils.data.default_collate(collated_masks_enc_a)
 
-        if self.max_keep is not None:
-            min_keep_enc_v = min(min_keep_enc_v, self.max_keep)
+        #logger.info(f'collated_masks_pred_v shape: {collated_masks_pred_v.shape}')
+        #logger.info(f'collated_masks_pred_a shape: {collated_masks_pred_a.shape}')
+        #logger.info(f'collated_masks_enc_v shape: {collated_masks_enc_v.shape}')
+        #logger.info(f'collated_masks_enc_a shape: {collated_masks_enc_a.shape}')
 
-        collated_masks_pred_v = [cm[:min_keep_pred_v] for cm in collated_masks_pred_v]
-        collated_masks_pred_v = torch.utils.data.default_collate(collated_masks_pred_v)
-        collated_masks_pred_a = [cm[:min_keep_pred_a] for cm in collated_masks_pred_a]
-        collated_masks_pred_a = torch.utils.data.default_collate(collated_masks_pred_a)
-        # --
-        collated_masks_enc_v = [cm[:min_keep_enc_v] for cm in collated_masks_enc_v]
-        collated_masks_enc_v = torch.utils.data.default_collate(collated_masks_enc_v)
-        collated_masks_enc_a = [cm[:min_keep_enc_a] for cm in collated_masks_enc_a]
-        collated_masks_enc_a = torch.utils.data.default_collate(collated_masks_enc_a)
+        #logger.info(f'mask_e_v shape: {mask_e_v.shape}')
+        #logger.info(f'mask_e_a shape: {mask_e_a.shape}')
+        #logger.info(f'mask_p_v shape: {mask_p_v.shape}')
+        #logger.info(f'mask_p_a shape: {mask_p_a.shape}')
 
-        return collated_masks_enc_v, collated_masks_enc_a, collated_masks_pred_v, collated_masks_pred_a
+
+        return mask_e_v, mask_e_a, mask_p_v, mask_p_a

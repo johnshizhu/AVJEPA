@@ -35,7 +35,6 @@ class AudioVideoMultiMaskWrapper(nn.Module):
         self.backbone = backbone
 
     def forward(self, x, y, masks=None):
-        #logger.info("AVMultiMaskWrapper FORWARD...")
         if masks is None:
             return self.backbone(x, y)
 
