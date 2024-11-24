@@ -447,20 +447,12 @@ def main(args, resume_preempt=False):
                     logger.info(f'-------FORWARD TARGET-------')
                     with torch.no_grad():
                         h = target_encoder(c, a)
-                        logger.info(f'target_encoder output shape: {h.shape}')
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]                        
                         video_tokens, audio_tokens = torch.split(h, [1568, 96], dim=1)
                         
                         # -- masking pred tokens
-                        for i, m in enumerate(masks_pred_v):
-                            logger.info(f'masks_pred_v[{i}] shape: {m.shape}')
-                        for i, m in enumerate(masks_pred_a):
-                            logger.info(f'masks_pred_a[{i}] shape: {m.shape}')
                         h_v = apply_masks(video_tokens, masks_pred_v)
                         h_a = apply_masks(audio_tokens, masks_pred_a)
-
-                        logger.info(f'h_v shape: {h_v.shape}')
-                        logger.info(f'h_a shape: {h_a.shape}')
 
                         h = torch.cat([h_v, h_a], dim=1)
                         logger.info(f'target result shape: {h.shape}')
@@ -484,6 +476,7 @@ def main(args, resume_preempt=False):
 
                     logger.info(f'-------FORWARD PREDICTOR-------')
                     z = predictor((z_v, z_a), (h_v, h_a), (masks_enc_v, masks_enc_a), (masks_pred_v, masks_pred_a)) # FIXME here
+                    logger.info(f'predictor result shape: {z[0].shape}')
                     return z
 
                 def loss_fn(z, h):

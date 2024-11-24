@@ -210,25 +210,13 @@ class AudioVisionTransformer(nn.Module):
         video_tokens += video_pos_embed
         audio_tokens += audio_pos_embed
 
-        logger.info(f'video_tokens shape: {video_tokens.shape}')
-        logger.info(f'audio_tokens shape: {audio_tokens.shape}')
-
-        if v_masks is not None:
-            for i, m in enumerate(v_masks):
-                logger.info(f'v_masks[{i}] shape: {m.shape}')
-            for i, m in enumerate(a_masks):
-                logger.info(f'a_masks[{i}] shape: {m.shape}')
-
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
             video_tokens = target_apply_masks(video_tokens, v_masks)
             audio_tokens = target_apply_masks(audio_tokens, a_masks)
 
-        logger.info(f'video_tokens shape post masking: {video_tokens.shape}')
-        logger.info(f'audio_tokens shape post masking: {audio_tokens.shape}')
 
         x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
-        logger.info(f'multi-modal input shape: {x.shape}')
 
         # Fwd prop
         outs = []

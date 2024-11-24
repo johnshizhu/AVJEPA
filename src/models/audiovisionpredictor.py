@@ -10,7 +10,7 @@ from src.utils.tensors import (
     trunc_normal_,
     repeat_interleave_batch
 )
-from src.masks.utils import apply_masks
+from src.masks.utils import apply_masks, target_apply_masks
 
 from logging import getLogger
 logger = getLogger()
@@ -202,6 +202,8 @@ class AudioVisionTransformerPredictor(nn.Module):
         ctxt_v, ctxt_a = ctxt
         tgt_v,  tgt_a  = tgt
 
+        logger.info(f'mask_tokens status: {self.mask_tokens}')
+
         logger.info(f'ctxt_v.shape: {ctxt_v.shape}')
         logger.info(f'ctxt_a.shape: {ctxt_a.shape}')
         logger.info(f'tgt_v.shape: {tgt_v.shape}')
@@ -209,6 +211,15 @@ class AudioVisionTransformerPredictor(nn.Module):
 
         masks_ctxt_v, masks_ctxt_a = masks_ctxt[0], masks_ctxt[1]
         masks_tgt_v, masks_tgt_a = masks_tgt[0], masks_tgt[1]
+
+        for i, m in enumerate(masks_ctxt_v):
+            logger.info(f'masks_ctxt_v[{i}] shape: {m.shape}')
+        for i, m in enumerate(masks_ctxt_a):
+            logger.info(f'masks_ctxt_a[{i}] shape: {m.shape}')
+        for i, m in enumerate(masks_tgt_v):
+            logger.info(f'masks_tgt_v[{i}] shape: {m.shape}')
+        for i, m in enumerate(masks_tgt_a):
+            logger.info(f'masks_tgt_a[{i}] shape: {m.shape}')
 
         if not isinstance(masks_ctxt_v, list):
             masks_ctxt_v = [masks_ctxt_v]
@@ -225,19 +236,25 @@ class AudioVisionTransformerPredictor(nn.Module):
         # Map context tokens to predictor dimensions
         x_v = self.predictor_embed_v(ctxt_v)
         x_a = self.predictor_embed_a(ctxt_a)
-        _, N_ctxt, D = x.shape
+        _, N_ctxt, D = x_v.shape
 
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed_v is not None:
             ctxt_pos_embed_v = self.predictor_pos_embed_v.repeat(B, 1, 1)
             ctxt_pos_embed_a = self.predictor_pos_embed_a.repeat(B, 1, 1)
-            x += apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
+            x_v += target_apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
+            x_a += target_apply_masks(ctxt_pos_embed_a, masks_ctxt_a)
             
+        logger.info(f'type x_v: {type(x_v)}')
+        logger.info(f'type x_a: {type(x_a)}')
+        print(1/0)
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens is None:
-            pred_tokens = self.predictor_embed(tgt)
-            pred_tokens = self.diffusion(pred_tokens)
+            pred_tokens_v = self.predictor_embed_v(tgt_v)
+            pred_tokens_a = self.predictor_embed_a(tgt_a)
+            pred_tokens_v = self.diffusion(pred_tokens_v)
+            pred_tokens_a = self.diffusion(pred_tokens_a)
         else:
             mask_index = mask_index % self.num_mask_tokens
             pred_tokens = self.mask_tokens[mask_index]
