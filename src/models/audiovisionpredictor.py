@@ -231,7 +231,8 @@ class AudioVisionTransformerPredictor(nn.Module):
             masks_tgt_a = [masks_tgt_a]
 
         # Batch Size
-        B = len(ctxt) // len(masks_ctxt_v)
+        # B = len(ctxt_v) // len(masks_ctxt_v)
+        B = 24
 
         # Map context tokens to predictor dimensions
         x_v = self.predictor_embed_v(ctxt_v)
@@ -247,7 +248,6 @@ class AudioVisionTransformerPredictor(nn.Module):
             
         logger.info(f'type x_v: {type(x_v)}')
         logger.info(f'type x_a: {type(x_a)}')
-        print(1/0)
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens is None:
@@ -259,25 +259,49 @@ class AudioVisionTransformerPredictor(nn.Module):
             mask_index = mask_index % self.num_mask_tokens
             pred_tokens = self.mask_tokens[mask_index]
             pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
-            pred_tokens = apply_masks(pred_tokens, masks_tgt)
+            pred_tokens_v = apply_masks(pred_tokens, masks_tgt_v[0])
+            pred_tokens_a = apply_masks(pred_tokens, masks_tgt_a[0])
+            logger.info(f'pred_tokens: {pred_tokens.shape}')
+            logger.info(f'pred_tokens_a: {pred_tokens_a.shape}')
+
 
         # Add positional embedding to target tokens
         if self.predictor_pos_embed_v is not None:
             pos_embs = self.predictor_pos_embed_v.repeat(B, 1, 1)
-            pos_embs = apply_masks(pos_embs, masks_tgt)
-            pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt))
-            pred_tokens += pos_embs
+            pos_embs = apply_masks(pos_embs, masks_tgt_v[0])
+            # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_v))
+            logger.info(f'left: {pred_tokens_v.shape}')
+            logger.info(f'right: {pos_embs.shape}')
+            pred_tokens_v += pos_embs
+
+        if self.predictor_pos_embed_a is not None:
+            pos_embs = self.predictor_pos_embed_a.repeat(B, 1, 1)
+            pos_embs = apply_masks(pos_embs, masks_tgt_a[0])
+            # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_a))
+            pred_tokens_a += pos_embs
 
         # Concatenate context & target tokens
-        x = x.repeat(len(masks_tgt), 1, 1)
-        x = torch.cat([x, pred_tokens], dim=1)
+        x_v = x_v.repeat(len(masks_tgt_v), 1, 1)
+        x_v = torch.cat([x_v, pred_tokens_v], dim=1)
+
+        # x_a.shape: (24, 84, 384)
+        # pred_a.shape: [1, 576, 384]
+        repeated_pred_a = pred_tokens_a.repeat(B, 1, 1)
+        x_a = torch.cat([x_a, repeated_pred_a], dim=1)
+        logger.info(f'x_v: {x_v.shape}')
+        logger.info(f'x_a: {x_a.shape}')
+        
+
 
         # FIXME: this implementation currently assumes masks_ctxt and masks_tgt
         # are alligned 1:1 (ok with MultiMask wrapper on predictor but
         # otherwise will break)
-        masks_ctxt = torch.cat(masks_ctxt, dim=0)
-        masks_tgt = torch.cat(masks_tgt, dim=0)
-        masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
+        # POLO: TODO  do we need mask here
+        x = torch.cat([x_v, x_a], dim=1)
+        masks = None
+        # masks_ctxt = torch.cat(masks_ctxt, dim=0)
+        # masks_tgt = torch.cat(masks_tgt, dim=0)
+        # masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
 
         # Fwd prop
         for blk in self.predictor_blocks:

@@ -473,6 +473,20 @@ def main(args, resume_preempt=False):
                     _, v_size, _ = m_c_v_t.shape
                     _, a_size, _ = m_c_a_t.shape
                     z_v, z_a = torch.split(z[0], [v_size, a_size], dim=1)
+                    logger.info(f"z: {len(z)}")
+                    logger.info(f"z0: {len(z[0])}")
+                    logger.info(f"z0: {z[0].shape}")
+                    logger.info(f"z_v: {len(z_v)}")
+                    logger.info(f"z_a: {len(z_a)}")
+                    logger.info(f"z_v: {z_v.shape}")
+                    logger.info(f"z_a: {z_a.shape}")
+                    logger.info(f"h_v: {len(h_v)}")
+                    logger.info(f"h_a: {len(h_a)}")
+                    logger.info(f"h_v: {h_v.shape}")
+                    logger.info(f"h_a: {h_a.shape}")
+                    logger.info(f"masks_enc_v: {len(masks_enc_v)}")
+                    logger.info(f"masks_enc_v: {masks_enc_v[0].shape}")
+
 
                     logger.info(f'-------FORWARD PREDICTOR-------')
                     z = predictor((z_v, z_a), (h_v, h_a), (masks_enc_v, masks_enc_a), (masks_pred_v, masks_pred_a)) # FIXME here
