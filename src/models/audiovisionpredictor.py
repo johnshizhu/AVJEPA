@@ -295,12 +295,10 @@ class AudioVisionTransformerPredictor(nn.Module):
         logger.info(f'x_v: {x_v.shape}')
 
         logger.info(f'x_a: {x_a.shape}')
-        x_a = x_a.repeat(len(masks_tgt_a), 1, 1)
-        logger.info(f'x_a: {x_a.shape}')
         logger.info(f'pred_tokens_a: {pred_tokens_a.shape}')
         x_a = torch.cat([x_a, pred_tokens_a], dim=1)
+        logger.info(f'x_a: {x_a.shape}')
 
-        print(1/0)
         
 
 
