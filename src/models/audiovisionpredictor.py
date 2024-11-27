@@ -239,8 +239,8 @@ class AudioVisionTransformerPredictor(nn.Module):
         x_a = self.predictor_embed_a(ctxt_a)
         logger.info(f"x_v: {x_v.shape}")
         logger.info(f"x_a: {x_a.shape}")
-        _, N_ctxt, D = x_v.shape
-
+        _, N_vctxt, D = x_v.shape
+        _, N_actxt, _ = x_a.shape
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed_v is not None:
             ctxt_pos_embed_v = self.predictor_pos_embed_v.repeat(B, 1, 1)
@@ -307,6 +307,7 @@ class AudioVisionTransformerPredictor(nn.Module):
         # otherwise will break)
         # POLO: TODO  do we need mask here
         x = torch.cat([x_v, x_a], dim=1)
+        logger.info(f'x: {x.shape}')
         masks = None
         # masks_ctxt = torch.cat(masks_ctxt, dim=0)
         # masks_tgt = torch.cat(masks_tgt, dim=0)
@@ -318,9 +319,17 @@ class AudioVisionTransformerPredictor(nn.Module):
         x = self.predictor_norm(x)
 
         # Return output corresponding to target tokens
-        x = x[:, N_ctxt:]
+        print("num")
+        print(x_v.shape[1])
+        print("num")
+        x1 = x[:, N_vctxt:x_v.shape[1]]
+        logger.info(f'x1: {x1.shape}')
+        x2 = x[:, x_v.shape[1] + N_actxt:]
+        logger.info(f'x2: {x2.shape}')
+        x = torch.cat([x1, x2], dim=1)
+        logger.info(f'x3: {x.shape}')
         x = self.predictor_proj(x)
-
+        logger.info(f'x4: {x.shape}')
         return x
 
 
