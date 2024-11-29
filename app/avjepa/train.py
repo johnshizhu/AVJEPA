@@ -451,8 +451,12 @@ def main(args, resume_preempt=False):
                         video_tokens, audio_tokens = torch.split(h, [1568, 96], dim=1)
                         
                         # -- masking pred tokens
-                        h_v = apply_masks(video_tokens, masks_pred_v)
-                        h_a = apply_masks(audio_tokens, masks_pred_a)
+                        h_v = target_apply_masks(video_tokens, masks_pred_v)
+                        h_a = target_apply_masks(audio_tokens, masks_pred_a)
+                        logger.info(f'{masks_pred_v[0].shape}')
+                        logger.info(f'{masks_pred_v[1].shape}')
+                        logger.info(f'{masks_pred_a[0]}')
+                        logger.info(f'{masks_pred_a[1]}')
 
                         h = torch.cat([h_v, h_a], dim=1)
                         logger.info(f'target result shape: {h.shape}')
@@ -517,7 +521,6 @@ def main(args, resume_preempt=False):
                 loss = loss_jepa + reg_coeff * loss_reg
 
                 logger.info(f'Loss is: {loss}')
-                print(1/0)
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.
                 if mixed_precision:
@@ -553,7 +556,6 @@ def main(args, resume_preempt=False):
                     logger.info(f'_new_lr: {_new_lr}')
                     logger.info(f'_new_wd: {_new_wd}')
                     logger.info(f'STOP at end of first training step')
-                    print(1/0)
 
                 return (
                     float(loss),

@@ -211,6 +211,7 @@ class AudioVisionTransformerPredictor(nn.Module):
 
         masks_ctxt_v, masks_ctxt_a = masks_ctxt[0], masks_ctxt[1]
         masks_tgt_v, masks_tgt_a = masks_tgt[0], masks_tgt[1]
+        
 
         for i, m in enumerate(masks_ctxt_v):
             logger.info(f'masks_ctxt_v[{i}] shape: {m.shape}')
@@ -225,7 +226,7 @@ class AudioVisionTransformerPredictor(nn.Module):
             masks_ctxt_v = [masks_ctxt_v]
         if not isinstance(masks_ctxt_a, list):
             masks_ctxt_a = [masks_ctxt_a]
-        if not isinstance(masks_ctxt, list):
+        if not isinstance(masks_tgt_v, list):
             masks_tgt_v = [masks_tgt_v]
         if not isinstance(masks_tgt_a, list):
             masks_tgt_a = [masks_tgt_a]
@@ -263,7 +264,7 @@ class AudioVisionTransformerPredictor(nn.Module):
             mask_index = mask_index % self.num_mask_tokens
             pred_tokens = self.mask_tokens[mask_index]
             pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
-            pred_tokens_v = target_apply_masks(pred_tokens, masks_tgt_v[0])
+            pred_tokens_v = target_apply_masks(pred_tokens, masks_tgt_v)
             pred_tokens_a = target_apply_masks(pred_tokens, masks_tgt_a)
             logger.info(f'pred_tokens: {pred_tokens.shape}')
             logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
@@ -273,7 +274,7 @@ class AudioVisionTransformerPredictor(nn.Module):
         # Add positional embedding to target tokens
         if self.predictor_pos_embed_v is not None:
             pos_embs = self.predictor_pos_embed_v.repeat(B, 1, 1)
-            pos_embs = target_apply_masks(pos_embs, masks_tgt_v[0])
+            pos_embs = target_apply_masks(pos_embs, masks_tgt_v)
             # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_v))
             logger.info(f'left: {pred_tokens_v.shape}')
             logger.info(f'right: {pos_embs.shape}')
@@ -288,7 +289,6 @@ class AudioVisionTransformerPredictor(nn.Module):
         # Concatenate context & target tokens
 
         logger.info(f'x_v: {x_v.shape}')
-        x_v = x_v.repeat(24, 1, 1)
         logger.info(f'x_v: {x_v.shape}')
         logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
         x_v = torch.cat([x_v, pred_tokens_v], dim=1)
