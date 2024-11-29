@@ -264,7 +264,7 @@ class AudioVisionTransformerPredictor(nn.Module):
             pred_tokens = self.mask_tokens[mask_index]
             pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
             pred_tokens_v = target_apply_masks(pred_tokens, masks_tgt_v[0])
-            pred_tokens_a = target_apply_masks(pred_tokens, masks_tgt_a[0])
+            pred_tokens_a = target_apply_masks(pred_tokens, masks_tgt_a)
             logger.info(f'pred_tokens: {pred_tokens.shape}')
             logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
             logger.info(f'pred_tokens_a: {pred_tokens_a.shape}')
@@ -281,14 +281,14 @@ class AudioVisionTransformerPredictor(nn.Module):
 
         if self.predictor_pos_embed_a is not None:
             pos_embs = self.predictor_pos_embed_a.repeat(B, 1, 1)
-            pos_embs = target_apply_masks(pos_embs, masks_tgt_a[0])
+            pos_embs = target_apply_masks(pos_embs, masks_tgt_a)
             # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_a))
             pred_tokens_a += pos_embs
 
         # Concatenate context & target tokens
 
         logger.info(f'x_v: {x_v.shape}')
-        x_v = x_v.repeat(len(masks_tgt_v), 1, 1)
+        x_v = x_v.repeat(24, 1, 1)
         logger.info(f'x_v: {x_v.shape}')
         logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
         x_v = torch.cat([x_v, pred_tokens_v], dim=1)
