@@ -465,12 +465,12 @@ def main(args, resume_preempt=False):
                         # -- masking pred tokens
                         logger.info(f'target encoder video shape: {video_tokens.shape}')
                         logger.info(f'target encoder audio shape: {audio_tokens.shape}')
-                        h_v = target_apply_masks(video_tokens, masks_pred_v)
-                        h_a = target_apply_masks(audio_tokens, masks_pred_a)
-                        logger.info(f'target encoder output post mask VIDEO shape: {h_v.shape}')
-                        logger.info(f'target encoder output post mask AUDIO shape: {h_a.shape}')
+                        h_v = apply_masks(video_tokens, masks_pred_v, concat=False)
+                        h_a = apply_masks(audio_tokens, masks_pred_a, concat=False)
+                        logger.info(f'target encoder output post mask VIDEO shape: {h_v[0].shape}')
+                        logger.info(f'target encoder output post mask AUDIO shape: {h_a[0].shape}')
 
-                        h = torch.cat([h_v, h_a], dim=1)
+                        h = torch.cat([h_v[0], h_a[0]], dim=1)
                         logger.info(f'target encoder output h shape: {h.shape}')
                         #logger.info(f'target result shape: {h.shape}')
                         return h_v, h_a, h

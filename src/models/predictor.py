@@ -221,9 +221,10 @@ class VisionTransformerPredictor(nn.Module):
             mask_index = mask_index % self.num_mask_tokens
             logger.info(f'mask index after is: {mask_index}')
             pred_tokens = self.mask_tokens[mask_index]
+            logger.info(f'pred_tokens type: {type(pred_tokens)}')
             logger.info(f'pred_tokens first shape: {pred_tokens.shape}')
             pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
-            logger.info(f'pred_tokens second shape: {pred_tokens.shape}')
+            logger.info(f'pred_tokens repeat shape: {pred_tokens.shape}')
             pred_tokens = apply_masks(pred_tokens, masks_tgt)
             logger.info(f'pred_tokens third shape: {pred_tokens.shape}')
 
