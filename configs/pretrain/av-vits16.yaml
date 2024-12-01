@@ -29,7 +29,7 @@ data_aug:
   reprob: 0.0
 logging:
   folder: C:\Users\johns\OneDrive\Desktop\jepa_logs
-  write_tag: avjepaSmall
+  write_tag: avjepaSmall_LOWLR
 loss:
   loss_exp: 1.0
   reg_coeff: 0.0
@@ -80,9 +80,9 @@ optimization:
   final_weight_decay: 0.4
   epochs: 300
   warmup: 40
-  start_lr: 0.0002
-  lr: 0.000625
-  final_lr: 1.0e-06
+  start_lr: 0.00002
+  lr: 0.0000625
+  final_lr: 1.0e-07
   ema:
   - 0.998
   - 1.0

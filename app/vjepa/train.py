@@ -407,7 +407,15 @@ def main(args, resume_preempt=False):
                     _masks_pred.append(_mp)
 
                 return (clips, _masks_enc, _masks_pred)
+            
             clips, masks_enc, masks_pred = load_clips()
+
+            logger.info(f'clips shape: {clips.shape}')
+            for i, m in enumerate(masks_enc):
+                logger.info(f'masks_enc[{i}] shape: {m.shape}')
+            for i, m in enumerate(masks_pred):
+                logger.info(f'masks_pred[{i}] shape: {m.shape}')
+
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc[_i][0].size(-1))
@@ -423,10 +431,13 @@ def main(args, resume_preempt=False):
                     mask-pred.
                     """
                     with torch.no_grad():
+                        logger.info(f'target encoder input shape: {c.shape}')
                         h = target_encoder(c)
+                        logger.info(f'target encoder output shape: {h.shape}')
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
                         h = apply_masks(h, masks_pred, concat=False)
+                        logger.info(f'target encoder output post mask shape: {h[0].shape}')
                         return h
 
                 def forward_context(c, h):
@@ -434,7 +445,10 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
+                    logger.info(f'encoder input shape: {c.shape}')
+                    logger.info(f'encoder masks_enc[0] shape: {masks_enc[0].shape}')
                     z = encoder(c, masks_enc)
+                    logger.info(f'context encoder output shape: {z[0].shape}')
                     z = predictor(z, h, masks_enc, masks_pred)
                     return z
 

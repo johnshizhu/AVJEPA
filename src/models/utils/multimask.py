@@ -63,9 +63,9 @@ class PredictorMultiMaskWrapper(nn.Module):
             masks_tgt = [masks_tgt]
 
         outs = []
-        print("#################")
-        print(f"len outs: {len(ctxt)}")
-        print(f"len outs: {ctxt[0][0].shape}")
+        #print("#################")
+        #print(f"len outs: {len(ctxt)}")
+        #print(f"len outs: {ctxt[0][0].shape}")
         for i, (zi, hi, mc, mt) in enumerate(zip(ctxt, tgt, masks_ctxt, masks_tgt)):
             outs += [self.backbone(zi, hi, mc, mt, mask_index=i)]
         return outs
