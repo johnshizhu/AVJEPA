@@ -219,10 +219,10 @@ class AudioVisionTransformer(nn.Module):
             v_masks = torch.cat(v_masks, dim=0)
             a_masks = torch.cat(a_masks, dim=0)
             masks = torch.cat([v_masks, a_masks], dim=1)
-            logger.info(f'FORWARD PASS masks shape: {masks.shape}')
+            #logger.info(f'FORWARD PASS masks shape: {masks.shape}')
 
         x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
-        logger.info(f'FORWARD PASS x shape: {x.shape}')
+        #logger.info(f'FORWARD PASS x shape: {x.shape}')
         # Fwd prop
         outs = []
         for i, blk in enumerate(self.blocks):

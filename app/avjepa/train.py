@@ -555,8 +555,8 @@ def main(args, resume_preempt=False):
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
                     #logger.info(f'MASKS_PREV_V LEN: {len(masks_pred_v)}')
-                    #loss /= len(masks_pred_v)
-                    logger.info(f'loss is: {loss}')
+                    loss /= len(masks_pred_v)
+                    #logger.info(f'loss is: {loss}')
                     #print(1/0)
                     #logger.info(f'output loss is: {loss}')
                     return loss
