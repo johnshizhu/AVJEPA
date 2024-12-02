@@ -430,6 +430,7 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
+                    logger.info(f'-----Target-----')
                     with torch.no_grad():
                         logger.info(f'target encoder input shape: {c.shape}')
                         h = target_encoder(c)
@@ -437,7 +438,8 @@ def main(args, resume_preempt=False):
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
                         h = apply_masks(h, masks_pred, concat=False)
-                        logger.info(f'target encoder output post mask shape: {h[0].shape}')
+                        for i, m in enumerate(h):
+                            logger.info(f'h[{i}] shape is: {m.shape}')
                         return h
 
                 def forward_context(c, h):
@@ -445,10 +447,16 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    logger.info(f'encoder input shape: {c.shape}')
-                    logger.info(f'encoder masks_enc[0] shape: {masks_enc[0].shape}')
+                    logger.info(f'-----Context-----')
+                    logger.info(f'encoder c shape: {c.shape}')
+                    logger.info(f'encoder masks_enc len: {len(masks_enc)}')
+                    for i, m in enumerate(masks_enc):
+                        logger.info(f'encoder masks_enc[{i}] shape: {m.shape}')
                     z = encoder(c, masks_enc)
-                    logger.info(f'context encoder output shape: {z[0].shape}')
+                    logger.info(f'context result shape: {z[0].shape}')
+                    logger.info(f'-----Predictor------')
+                    for i, m in enumerate(h):
+                        logger.info(f'h[{i}] shape: {m.shape}')
                     z = predictor(z, h, masks_enc, masks_pred)
                     return z
 
@@ -457,7 +465,10 @@ def main(args, resume_preempt=False):
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
+                    logger.info(f'MASKS_PREV LEN: {len(masks_pred)}')
                     loss /= len(masks_pred)
+                    logger.info(f'loss is: {loss}')
+                    print(1/0)
                     return loss
 
                 def reg_fn(z):
@@ -472,6 +483,8 @@ def main(args, resume_preempt=False):
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
+                logger.info(f'LOSS IS: {loss}')
+                print(1/0)
 
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.

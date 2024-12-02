@@ -47,11 +47,19 @@ class AudioVisionTransformerPredictor(nn.Module):
         self.predictor_embed_a = nn.Linear(embed_dim, predictor_embed_dim, bias=True)
 
         # Mask tokens
-        self.mask_tokens = None
+        self.mask_tokens_v = None
         self.num_mask_tokens = 0
         if use_mask_tokens:
             self.num_mask_tokens = num_mask_tokens
-            self.mask_tokens = nn.ParameterList([
+            self.mask_tokens_v = nn.ParameterList([
+                nn.Parameter(torch.zeros(1, 1, predictor_embed_dim))
+                for i in range(num_mask_tokens)
+            ])
+        self.mask_tokens_a = None
+        self.num_mask_tokens = 0
+        if use_mask_tokens:
+            self.num_mask_tokens = num_mask_tokens
+            self.mask_tokens_a = nn.ParameterList([
                 nn.Parameter(torch.zeros(1, 1, predictor_embed_dim))
                 for i in range(num_mask_tokens)
             ])
@@ -67,8 +75,8 @@ class AudioVisionTransformerPredictor(nn.Module):
         grid_size = self.input_size // self.patch_size
         grid_depth = self.num_frames // self.tubelet_size
 
-        a_height = a_size[0] // self.patch_size
-        a_width  = a_size[1] // self.patch_size
+        self.a_height = a_size[0] // self.patch_size
+        self.a_width  = a_size[1] // self.patch_size
 
         self.num_patches = num_patches = (
             (num_frames // tubelet_size)
@@ -76,17 +84,17 @@ class AudioVisionTransformerPredictor(nn.Module):
             * (img_size // patch_size)
         )
 
-        num_patches_a = a_height * a_width
+        self.num_patches_a = self.a_height * self.a_width
 
         # Position embedding
         self.uniform_power = uniform_power
         self.predictor_pos_embed_v = None
         self.predictor_pos_embed_a = None
         self.predictor_pos_embed_v = nn.Parameter(
-            torch.zeros(1, num_patches, predictor_embed_dim),
+            torch.zeros(1, self.num_patches, predictor_embed_dim),
             requires_grad=False)
         self.predictor_pos_embed_a = nn.Parameter(
-            torch.zeros(1, num_patches_a, predictor_embed_dim),
+            torch.zeros(1, self.num_patches_a, predictor_embed_dim),
             requires_grad=False)
 
         # Attention Blocks
@@ -116,7 +124,9 @@ class AudioVisionTransformerPredictor(nn.Module):
             self._init_audio_pos_embed(self.predictor_pos_embed_a.data)
         self.init_std = init_std
         if not zero_init_mask_tokens:
-            for mt in self.mask_tokens:
+            for mt in self.mask_tokens_v:
+                trunc_normal_(mt, std=init_std)
+            for mt in self.mask_tokens_a:
                 trunc_normal_(mt, std=init_std)
         self.apply(self._init_weights)
         self._rescale_blocks()
@@ -199,35 +209,11 @@ class AudioVisionTransformerPredictor(nn.Module):
         # -- video and audio tokens extraction
         assert (masks_ctxt is not None) and (masks_tgt is not None), 'Cannot run predictor without mask indices'
 
-        ctxt_v, ctxt_a = ctxt
-        tgt_v,  tgt_a  = tgt
+        ctxt_v, ctxt_a = ctxt[0], ctxt[1]
+        tgt_v,  tgt_a  = tgt[0], tgt[1]
 
-        logger.info(f'ctxt_v shape: {ctxt_v.shape}')
-        logger.info(f'ctxt_a shape: {ctxt_a.shape}')
-        logger.info(f'tgt_v  shape: {tgt_v.shape}')
-        logger.info(f'tgt_a  shape: {tgt_a.shape}')
-
-        # logger.info(f'mask_tokens status: {self.mask_tokens}')
         masks_ctxt_v, masks_ctxt_a = masks_ctxt[0], masks_ctxt[1]
         masks_tgt_v, masks_tgt_a = masks_tgt[0], masks_tgt[1]
-
-        logger.info(f'masks_ctxt_v len: {len(masks_ctxt_v)}')
-        logger.info(f'masks_ctxt_a len: {len(masks_ctxt_a)}')
-        logger.info(f'masks_tgt_v  len: {len(masks_tgt_v)}')
-        logger.info(f'masks_tgt_a  len: {len(masks_tgt_a)}')
-        logger.info(f'masks_ctxt_v[0] shape: {masks_ctxt_v[0].shape}')
-        logger.info(f'masks_ctxt_a[0] shape: {masks_ctxt_a[0].shape}')
-        logger.info(f'masks_tgt_v[0]  shape: {masks_tgt_v[0].shape}')
-        logger.info(f'masks_tgt_a[0]  shape: {masks_tgt_a[0].shape}')
-
-        # for i, m in enumerate(masks_ctxt_v):
-        #     logger.info(f'masks_ctxt_v[{i}] shape: {m.shape}')
-        # for i, m in enumerate(masks_ctxt_a):
-        #     logger.info(f'masks_ctxt_a[{i}] shape: {m.shape}')
-        # for i, m in enumerate(masks_tgt_v):
-        #     logger.info(f'masks_tgt_v[{i}] shape: {m.shape}')
-        # for i, m in enumerate(masks_tgt_a):
-        #     logger.info(f'masks_tgt_a[{i}] shape: {m.shape}')
 
         if not isinstance(masks_ctxt_v, list):
             masks_ctxt_v = [masks_ctxt_v]
@@ -238,92 +224,96 @@ class AudioVisionTransformerPredictor(nn.Module):
         if not isinstance(masks_tgt_a, list):
             masks_tgt_a = [masks_tgt_a]
 
+        # logger.info(f'(predictor)ctxt_v shape: {ctxt_v.shape}')
+        # logger.info(f'(predictor)ctxt_a shape: {ctxt_a.shape}')
+        # logger.info(f'(predictor)tgt_v  shape: {tgt_v.shape}')
+        # logger.info(f'(predictor)tgt_a  shape: {tgt_a.shape}')
+        # logger.info(f'(predictor)masks_ctxt_v len: {len(masks_ctxt_v)}')
+        # logger.info(f'(predictor)masks_ctxt_a len: {len(masks_ctxt_a)}')
+        # logger.info(f'(predictor)masks_tgt_v  len: {len(masks_tgt_v)}')
+        # logger.info(f'(predictor)masks_tgt_a  len: {len(masks_tgt_a)}')
+        # logger.info(f'(predictor)masks_ctxt_v[0] shape: {masks_ctxt_v[0].shape}')
+        # logger.info(f'(predictor)masks_ctxt_a[0] shape: {masks_ctxt_a[0].shape}')
+        # logger.info(f'(predictor)masks_tgt_v[0]  shape: {masks_tgt_v[0].shape}')
+        # logger.info(f'(predictor)masks_tgt_a[0]  shape: {masks_tgt_a[0].shape}')
+
         # Batch Size
-        # B = len(ctxt_v) // len(masks_ctxt_v)
-        B = 24
+        B = len(ctxt_v) // len(masks_ctxt_v)
+        #B = 24
 
         # Map context tokens to predictor dimensions
         x_v = self.predictor_embed_v(ctxt_v)
         x_a = self.predictor_embed_a(ctxt_a)
-        # logger.info(f"x_v: {x_v.shape}")
-        # logger.info(f"x_a: {x_a.shape}")
         _, N_vctxt, D = x_v.shape
         _, N_actxt, _ = x_a.shape
+        #logger.info(f'(predictor)mapping context tokens to predictor dimensions, x_v shape: {x_v.shape}')
+        #logger.info(f'(predictor)mapping context tokens to predictor dimensions, x_a shape: {x_a.shape}')
+
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed_v is not None:
             ctxt_pos_embed_v = self.predictor_pos_embed_v.repeat(B, 1, 1)
             ctxt_pos_embed_a = self.predictor_pos_embed_a.repeat(B, 1, 1)
-            x_v += target_apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
-            x_a += target_apply_masks(ctxt_pos_embed_a, masks_ctxt_a)
+            x_v += apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
+            x_a += apply_masks(ctxt_pos_embed_a, masks_ctxt_a)
+        #logger.info(f'(predictor)mapping target tokens to predictor dimensions, x_v shape: {x_v.shape}')
+        #logger.info(f'(predictor)mapping target tokens to predictor dimensions, x_a shape: {x_a.shape}')
 
-        # logger.info(f"x_v: {x_v.shape}")
-        # logger.info(f"x_a: {x_a.shape}")
-        # logger.info(f'type x_v: {type(x_v)}')
-        # logger.info(f'type x_a: {type(x_a)}')
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
-        if self.mask_tokens is None:
+        if self.mask_tokens_v is None:
             pred_tokens_v = self.predictor_embed_v(tgt_v)
             pred_tokens_a = self.predictor_embed_a(tgt_a)
             pred_tokens_v = self.diffusion(pred_tokens_v)
             pred_tokens_a = self.diffusion(pred_tokens_a)
         else:
-            logger.info(f'mask index before is: {mask_index}')
             mask_index = mask_index % self.num_mask_tokens
-            logger.info(f'mask index after is: {mask_index}')
-            pred_tokens = self.mask_tokens[mask_index]
-            logger.info(f'pred_tokens type: {type(pred_tokens)}')
-            logger.info(f'pred_tokens first shape: {pred_tokens.shape}')
-            pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
-            logger.info(f'pred_tokens repeat shape: {pred_tokens.shape}')
-            pred_tokens_v = target_apply_masks(pred_tokens, masks_tgt_v)
-            pred_tokens_a = target_apply_masks(pred_tokens, masks_tgt_a)
-            logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
-            logger.info(f'pred_tokens_a: {pred_tokens_a.shape}')
-
+            #logger.info(f'(predictor) mask_index: {mask_index}')
+            pred_tokens_v = self.mask_tokens_v[mask_index]
+            pred_tokens_a = self.mask_tokens_a[mask_index]
+            pred_tokens_v = pred_tokens_v.repeat(B, self.num_patches, 1)
+            pred_tokens_a = pred_tokens_a.repeat(B, self.num_patches_a, 1)
+            pred_tokens_v = apply_masks(pred_tokens_v, masks_tgt_v)
+            pred_tokens_a = apply_masks(pred_tokens_a, masks_tgt_a)
 
         # Add positional embedding to target tokens
         if self.predictor_pos_embed_v is not None:
             pos_embs = self.predictor_pos_embed_v.repeat(B, 1, 1)
-            pos_embs = target_apply_masks(pos_embs, masks_tgt_v)
-            # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_v))
-            #logger.info(f'left: {pred_tokens_v.shape}')
-            #logger.info(f'right: {pos_embs.shape}')
+            pos_embs = apply_masks(pos_embs, masks_tgt_v)
+            pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_v))
             pred_tokens_v += pos_embs
-
         if self.predictor_pos_embed_a is not None:
             pos_embs = self.predictor_pos_embed_a.repeat(B, 1, 1)
-            pos_embs = target_apply_masks(pos_embs, masks_tgt_a)
-            # pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_a))
+            pos_embs = apply_masks(pos_embs, masks_tgt_a)
+            pos_embs = repeat_interleave_batch(pos_embs, B, repeat=len(masks_ctxt_a))
             pred_tokens_a += pos_embs
 
         # Concatenate context & target tokens
-
-        #logger.info(f'x_v: {x_v.shape}')
-        #logger.info(f'x_v: {x_v.shape}')
-        #logger.info(f'pred_tokens_v: {pred_tokens_v.shape}')
+        x_v = x_v.repeat(len(masks_tgt_v), 1, 1)
+        x_a = x_a.repeat(len(masks_tgt_a), 1, 1)
         x_v = torch.cat([x_v, pred_tokens_v], dim=1)
-        #logger.info(f'x_v: {x_v.shape}')
-
-        #logger.info(f'x_a: {x_a.shape}')
-        #logger.info(f'pred_tokens_a: {pred_tokens_a.shape}')
         x_a = torch.cat([x_a, pred_tokens_a], dim=1)
-        #logger.info(f'x_a: {x_a.shape}')
-
-        
-
+        #logger.info(f'X_V INPUT SHAPE: {x_v.shape}')
+        #logger.info(f'X_A INPUT SHAPE: {x_a.shape}')
 
         # FIXME: this implementation currently assumes masks_ctxt and masks_tgt
         # are alligned 1:1 (ok with MultiMask wrapper on predictor but
         # otherwise will break)
-        # POLO: TODO  do we need mask here
-        x = torch.cat([x_v, x_a], dim=1)
-        masks = None
-        # masks_ctxt = torch.cat(masks_ctxt, dim=0)
-        # masks_tgt = torch.cat(masks_tgt, dim=0)
-        # masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
+        masks_ctxt_v = torch.cat(masks_ctxt_v, dim=0)
+        masks_ctxt_a = torch.cat(masks_ctxt_a, dim=0)
+        masks_tgt_v = torch.cat(masks_tgt_v, dim=0)
+        masks_tgt_a = torch.cat(masks_tgt_a, dim=0)
 
-        #logger.info(f'x shape pre input to predictor blocks: {x.shape}')
+        masks_ctxt = torch.cat([masks_ctxt_v, masks_ctxt_a], dim=1)
+        #logger.info(f'MASKS_CTXT SHAPE: {masks_ctxt.shape}')
+        masks_tgt = torch.cat([masks_tgt_v, masks_tgt_a], dim=1)
+        #logger.info(f'MASKS_TGT SHAPE: {masks_tgt.shape}')
+
+        masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
+        x = torch.cat([x_v, x_a], dim=1)
+
+        #logger.info(f'MASKS SHAPE: {masks.shape}')
+        #logger.info(f'X INPUT SHAPE: {x.shape}')
+
         # Fwd prop
         for blk in self.predictor_blocks:
             x = blk(x, mask=masks)
@@ -332,14 +322,13 @@ class AudioVisionTransformerPredictor(nn.Module):
 
         # Return output corresponding to target tokens
         x1 = x[:, N_vctxt:x_v.shape[1]]
-        logger.info(f'x1: {x1.shape}')
+        #logger.info(f'x1: {x1.shape}')
         x2 = x[:, x_v.shape[1] + N_actxt:]
-        logger.info(f'x2: {x2.shape}')
+        #logger.info(f'x2: {x2.shape}')
         x = torch.cat([x1, x2], dim=1)
-        logger.info(f'x3: {x.shape}')
+        #logger.info(f'x3: {x.shape}')
         x = self.predictor_proj(x)
-        logger.info(f'x4: {x.shape}')
-        print(1/0)
+        #logger.info(f'x4: {x.shape}')
         return x
 
 

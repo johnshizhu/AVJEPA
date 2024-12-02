@@ -197,6 +197,7 @@ class AudioVisionTransformer(nn.Module):
 
         if v_masks is not None and not isinstance(v_masks, list):
             v_masks = [v_masks]
+
         if a_masks is not None and not isinstance(a_masks, list):
             a_masks = [a_masks]
 
@@ -212,9 +213,12 @@ class AudioVisionTransformer(nn.Module):
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
-            video_tokens = target_apply_masks(video_tokens, v_masks)
-            audio_tokens = target_apply_masks(audio_tokens, a_masks)
+            video_tokens = apply_masks(video_tokens, v_masks)
+            audio_tokens = apply_masks(audio_tokens, a_masks)
 
+            v_masks = torch.cat(v_masks, dim=0)
+            a_masks = torch.cat(a_masks, dim=0)
+            masks = torch.cat([v_masks, a_masks], dim=1)
 
         x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
 

@@ -180,19 +180,10 @@ class VisionTransformerPredictor(nn.Module):
         :params masks_tgt: indices of target tokens in input
         """
 
-        logger.info(f'ctxt shape: {ctxt.shape}')
-        logger.info(f'tgt  shape: {tgt.shape}')
-        logger.info(f'masks_ctxt len: {len(masks_ctxt)}')
-        logger.info(f'masks_tgt  len: {len(masks_tgt)}')
-        logger.info(f'masks_ctxt[0] shape: {masks_ctxt[0].shape}')
-        logger.info(f'masks_tgt[0]  shape: {masks_tgt[0].shape}')
-
-
         assert (masks_ctxt is not None) and (masks_tgt is not None), 'Cannot run predictor without mask indices'
 
         if not isinstance(masks_ctxt, list):
             masks_ctxt = [masks_ctxt]
-
         if not isinstance(masks_tgt, list):
             masks_tgt = [masks_tgt]
 
@@ -202,31 +193,21 @@ class VisionTransformerPredictor(nn.Module):
         # Map context tokens to pedictor dimensions
         x = self.predictor_embed(ctxt)
         _, N_ctxt, D = x.shape
-        logger.info(f'mapping context tokens to predictor dimensions, x shape: {x.shape}')
 
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed is not None:
             ctxt_pos_embed = self.predictor_pos_embed.repeat(B, 1, 1)
-            tmp = apply_masks(ctxt_pos_embed, masks_ctxt)
-            logger.info(f'tmp shape: {tmp.shape}')
-            x += tmp
-        logger.info(f'mapping target tokens to predictor dimensions, x shape: {x.shape}')
+            x += apply_masks(ctxt_pos_embed, masks_ctxt) 
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens is None:
             pred_tokens = self.predictor_embed(tgt)
             pred_tokens = self.diffusion(pred_tokens)
         else:
-            logger.info(f'mask index before is: {mask_index}')
             mask_index = mask_index % self.num_mask_tokens
-            logger.info(f'mask index after is: {mask_index}')
             pred_tokens = self.mask_tokens[mask_index]
-            logger.info(f'pred_tokens type: {type(pred_tokens)}')
-            logger.info(f'pred_tokens first shape: {pred_tokens.shape}')
             pred_tokens = pred_tokens.repeat(B, self.num_patches, 1)
-            logger.info(f'pred_tokens repeat shape: {pred_tokens.shape}')
             pred_tokens = apply_masks(pred_tokens, masks_tgt)
-            logger.info(f'pred_tokens third shape: {pred_tokens.shape}')
 
         # Add positional embedding to target tokens
         if self.predictor_pos_embed is not None:
@@ -238,6 +219,7 @@ class VisionTransformerPredictor(nn.Module):
         # Concatenate context & target tokens
         x = x.repeat(len(masks_tgt), 1, 1)
         x = torch.cat([x, pred_tokens], dim=1)
+
         # FIXME: this implementation currently assumes masks_ctxt and masks_tgt
         # are alligned 1:1 (ok with MultiMask wrapper on predictor but
         # otherwise will break)
@@ -245,20 +227,15 @@ class VisionTransformerPredictor(nn.Module):
         masks_tgt = torch.cat(masks_tgt, dim=0)
         masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
 
-        logger.info(f'x shape pre input to pre forward pass: {x.shape}')
         # Fwd prop
         for blk in self.predictor_blocks:
             x = blk(x, mask=masks)
         x = self.predictor_norm(x)
 
-        logger.info(f'x shape after forward pass: {x.shape}')
 
         # Return output corresponding to target tokens
         x = x[:, N_ctxt:]
-        logger.info(f'x1 shape: {x.shape}')
         x = self.predictor_proj(x)
-        logger.info(f'x2 shape: {x.shape}')
-        print(1/0)
         return x
 
 

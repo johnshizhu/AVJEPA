@@ -17,6 +17,9 @@ from src.models.utils.pos_embs import get_2d_sincos_pos_embed, get_3d_sincos_pos
 from src.utils.tensors import trunc_normal_
 from src.masks.utils import apply_masks
 
+from logging import getLogger
+
+logger = getLogger()
 
 class VisionTransformer(nn.Module):
     """ Vision Transformer """

@@ -16,21 +16,21 @@ def apply_masks(x, masks, concat=True):
     :param x: tensor of shape [B (batch-size), N (num-patches), D (feature-dim)]
     :param masks: list of tensors of shape [B, K] containing indices of K patches in [N] to keep
     """
-    logger.info(f'(apply_masks) x shape: {x.shape}')
-    logger.info(f'(apply_masks) masks len: {len(masks)}')
+    #logger.info(f'(apply_masks) x shape: {x.shape}')
+    #logger.info(f'(apply_masks) masks len: {len(masks)}')
     # -- masks are a tensor of INDICES of tokens that should be masked
     all_x = []
     for i, m in enumerate(masks):
-        logger.info(f'(apply_masks) m[{i}] shape: {m.shape}')
+        #logger.info(f'(apply_masks) m[{i}] shape: {m.shape}')
         mask_keep = m.unsqueeze(-1).repeat(1, 1, x.size(-1))
-        logger.info(f'(apply_masks) mask_keep shape: {mask_keep.shape}')
+        #logger.info(f'(apply_masks) mask_keep shape: {mask_keep.shape}')
         all_x += [torch.gather(x, dim=1, index=mask_keep)]
     if not concat:
-        logger.info(f'(apply_masks) NOT CONCAT')
+        #logger.info(f'(apply_masks) NOT CONCAT')
         return all_x
-    logger.info(f'(apply_masks) all_x[0] shape: {all_x[0].shape}')
+    #logger.info(f'(apply_masks) all_x[0] shape: {all_x[0].shape}')
     out = torch.cat(all_x, dim=1)
-    logger.info(f'(apply_masks) out shape: {out.shape}')
+    #logger.info(f'(apply_masks) out shape: {out.shape}')
     return out
 
 def target_apply_masks(x, masks, concat=True):
