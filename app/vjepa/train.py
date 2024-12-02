@@ -410,13 +410,6 @@ def main(args, resume_preempt=False):
             
             clips, masks_enc, masks_pred = load_clips()
 
-            logger.info(f'clips shape: {clips.shape}')
-            for i, m in enumerate(masks_enc):
-                logger.info(f'masks_enc[{i}] shape: {m.shape}')
-            for i, m in enumerate(masks_pred):
-                logger.info(f'masks_pred[{i}] shape: {m.shape}')
-
-
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc[_i][0].size(-1))
 
@@ -430,11 +423,8 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    logger.info(f'-----Target-----')
                     with torch.no_grad():
-                        logger.info(f'target encoder input shape: {c.shape}')
                         h = target_encoder(c)
-                        logger.info(f'target encoder output shape: {h.shape}')
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
                         # -- create targets (masked regions of h)
                         h = apply_masks(h, masks_pred, concat=False)
@@ -446,22 +436,48 @@ def main(args, resume_preempt=False):
                     """
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
+                    c type is: tensor
+                    h type is: list
+                    masks_enc type is: list
                     """
-                    logger.info(f'-----Context-----')
-                    logger.info(f'encoder c shape: {c.shape}')
-                    logger.info(f'encoder masks_enc len: {len(masks_enc)}')
+                    logger.info(f'-----Context-----')  
+                    logger.info(f'c shape is: {c.shape}')
+                    logger.info(f'h type is: {type(h)}')
                     for i, m in enumerate(masks_enc):
                         logger.info(f'encoder masks_enc[{i}] shape: {m.shape}')
+
                     z = encoder(c, masks_enc)
-                    logger.info(f'context result shape: {z[0].shape}')
-                    logger.info(f'-----Predictor------')
+                    
+                    logger.info(f'z output: {type(z)}')
+                    logger.info(f'z len is: {len(z)}')
+
+
+                    logger.info(f'(pre predictor) z type is: {type(z)}')
+                    logger.info(f'(pre predictor) h type is: {type(h)}')
+                    logger.info(f'(pre predictor) masks_enc type is: {type(masks_enc)}')
+                    logger.info(f'(pre predictor) masks_pred type is: {type(masks_pred)}')
+
+                    for i, m in enumerate(z):
+                        logger.info(f'(pre predictor) z[{i}] shape: {m.shape}')
                     for i, m in enumerate(h):
-                        logger.info(f'h[{i}] shape: {m.shape}')
+                        logger.info(f'(pre predictor) h[{i}] shape: {m.shape}')
+                    for i, m in enumerate(masks_enc):
+                        logger.info(f'(pre predictor) masks_enc[{i}] shape: {m.shape}')
+                    for i, m in enumerate(masks_pred):
+                        logger.info(f'(pre predictor) masks_pred[{i}] shape: {m.shape}')
                     z = predictor(z, h, masks_enc, masks_pred)
                     return z
 
                 def loss_fn(z, h):
                     loss = 0.
+                    logger.info(f'z type is: {type(z)}')
+                    logger.info(f'h type is: {type(h)}')
+                    logger.info(f'z len is: {len(z)}')
+                    logger.info(f'h len is: {len(h)}')
+                    for i, m in enumerate(z):
+                        logger.info(f'z[{i}] shape: {m.shape}')
+                    for i, m in enumerate(h):
+                        logger.info(f'h[{i}] shape: {m.shape}')
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp

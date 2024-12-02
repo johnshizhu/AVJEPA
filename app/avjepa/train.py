@@ -472,47 +472,70 @@ def main(args, resume_preempt=False):
                         #     logger.info(f'h_v[{i}] shape is: {m.shape}')
                         # for i, m in enumerate(h_a):
                         #     logger.info(f'h_a[{i}] shape is: {m.shape}')
-                        h = torch.cat([h_v[0], h_a[0]], dim=1)
-                        return h_v, h_a, h
+                        out = []
+                        for i in range(len(h_v)):
+                            out.append(torch.cat([h_v[i], h_a[i]], dim=1))
+                        return h_v, h_a, out
 
                 def forward_context(c, a, h_v, h_a):
                     """
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
+                    c type is: tensor
+                    a type is: tensor
+                    masks_enc_v type is: list
+                    masks_enc_a type is: list
+                    h_v type is: list
+                    h_a type is: list
                     """
-                    # logger.info(f'-----Context-----')
-                    # logger.info(f'encoder c input shape: {c.shape}')
-                    # logger.info(f'encoder a input shape: {a.shape}')
-                    # for i, m in enumerate(masks_enc_v):
-                    #     logger.info(f'encoder masks_enc_v[{i}] shape: {m.shape}')
-                    # for i, m in enumerate(masks_enc_a):
-                    #     logger.info(f'encoder masks_enc_a[{i}] shape: {m.shape}')
-                    z = encoder(c, a, (masks_enc_v[0], masks_enc_a[0])) # applying both v&a token masks
-                    #logger.info(f'context result shape: {z[0].shape}')
-                    c_v_t = torch.zeros(batch_size, 1568, 192, device=device)
-                    c_a_t = torch.zeros(batch_size, 96, 192, device=device)
-                    vt_masks = masks_enc_v[0]
-                    at_masks = masks_enc_a[0]
-                    if vt_masks is not None and not isinstance(vt_masks, list):
-                        vt_masks = [vt_masks]
-                    if at_masks is not None and not isinstance(at_masks, list):
-                        at_masks = [at_masks]
-                    m_c_v_t = apply_masks(c_v_t, vt_masks)
-                    m_c_a_t = apply_masks(c_a_t, at_masks)
-                    _, v_size, _ = m_c_v_t.shape
-                    _, a_size, _ = m_c_a_t.shape
-                    z_v, z_a = torch.split(z[0], [v_size, a_size], dim=1)
+                    masks_enc = list(zip(masks_enc_v, masks_enc_a))
+                    masks_pred = list(zip(masks_pred_v, masks_pred_a))
+                    h = list(zip(h_v, h_a))
 
-                    # logger.info(f'-----Predictor------')
-                    # logger.info(f'z_v shape: {z_v.shape}')
-                    # logger.info(f'z_a shape: {z_a.shape}')
-                    # logger.info(f'h_v len: {len(h_v)}')
-                    # logger.info(f'h_a len: {len(h_a)}')
-                    # for i, m in enumerate(h_v):
-                    #     logger.info(f'h_v[{i}] shape: {m.shape}')
-                    # for i, m in enumerate(h_a):
-                    #     logger.info(f'h_a[{i}] shape: {m.shape}')
-                    z = predictor((z_v, z_a), (h_v[0], h_a[0]), (masks_enc_v[0], masks_enc_a[0]), (masks_pred_v[0], masks_pred_a[0]))
+                    logger.info(f'-----Context-----')
+                    logger.info(f'c shape: {c.shape}')
+                    logger.info(f'a shape: {a.shape}')
+                    for i, m in enumerate(masks_enc):
+                        logger.info(f'masks_enc[{i}] shape: 0: {m[0].shape} 1: {m[1].shape}')
+
+                    z = encoder(c, a, masks_enc) # applying both v&a token masks
+                    
+                    logger.info(f'z output: {type(z)}')
+                    logger.info(f'z len is: {len(z)}')
+                    for i, m in enumerate(z):
+                        logger.info(f'z[{i}] shape: {m.shape}')
+                    v_size = []
+                    a_size = []
+                    for i in masks_enc:
+                        _, v_size_e = i[0].shape
+                        _, a_size_e = i[1].shape
+                        v_size.append(v_size_e)
+                        a_size.append(a_size_e)
+
+                    z_t = []
+                    for index, i in enumerate(z):
+                        z_v, z_a = torch.split(i, [v_size[index], a_size[index]], dim=1)
+                        z_t.append((z_v, z_a))
+
+                    # logger.info(f'(pre predictor) z_t len: {len(z_t)}')
+                    # logger.info(f'(pre predictor) h len: {len(h)}')
+                    # logger.info(f'(pre predictor) masks_enc len: {len(masks_enc)}')
+                    # logger.info(f'(pre predictor) masks_pred len: {len(masks_pred)}')
+
+                    # for i, m in enumerate(z_t):
+                    #     logger.info(f'pre predictor z_t[{i}][0] shape: {m[0].shape}')
+                    #     logger.info(f'pre predictor z_t[{i}][1] shape: {m[1].shape}')
+                    # for i, m in enumerate(h):
+                    #     logger.info(f'pre predictor h[{i}][0] shape: {m[0].shape}')
+                    #     logger.info(f'pre predictor h[{i}][1] shape: {m[1].shape}')
+                    # for i, m in enumerate(masks_enc):
+                    #     logger.info(f'pre predictor masks_enc[{i}][0] shape: {m[0].shape}')
+                    #     logger.info(f'pre predictor masks_enc[{i}][1] shape: {m[1].shape}')
+                    # for i, m in enumerate(masks_pred):
+                    #     logger.info(f'pre predictor masks_pred[{i}][0] shape: {m[0].shape}')
+                    #     logger.info(f'pre predictor masks_pred[{i}][1] shape: {m[1].shape}')
+
+                    z = predictor(z_t, h, masks_enc, masks_pred)
                     #logger.info(f'predictor result shape: {z[0].shape}')
                     return z
 
@@ -521,14 +544,20 @@ def main(args, resume_preempt=False):
                     # logger.info(f'h shape is: {h.shape}')
                     loss = 0.
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
+                    # logger.info(f'z type is: {type(z)}')
+                    # logger.info(f'h type is: {type(h)}')
+                    # logger.info(f'z len is: {len(z)}')
+                    # logger.info(f'h len is: {len(h)}')
+                    # for i, m in enumerate(z):
+                    #     logger.info(f'z[{i}] shape: {m.shape}')
+                    # for i, m in enumerate(h):
+                    #     logger.info(f'h[{i}] shape: {m.shape}')
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
-                        #logger.info(f'loss is: {loss}')
-                    #logger.info(f'masks_pred_v shape len: {len(masks_pred_v)}')
-                    logger.info(f'MASKS_PREV_V LEN: {len(masks_pred_v)}')
-                    loss /= len(masks_pred_v)
+                    #logger.info(f'MASKS_PREV_V LEN: {len(masks_pred_v)}')
+                    #loss /= len(masks_pred_v)
                     logger.info(f'loss is: {loss}')
-                    print(1/0)
+                    #print(1/0)
                     #logger.info(f'output loss is: {loss}')
                     return loss
 
@@ -546,6 +575,7 @@ def main(args, resume_preempt=False):
                     #     logger.info(f'POST TARGET h_a[{i}] shape: {m.shape}')
 
                     z = forward_context(clips, asgram, h_v, h_a)
+                    logger.info(f'')
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))

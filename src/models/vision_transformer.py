@@ -181,6 +181,9 @@ class VisionTransformer(nn.Module):
         if masks is not None:
             x = apply_masks(x, masks)
             masks = torch.cat(masks, dim=0)
+            logger.info(f'FORWARD PASS masks shape: {masks.shape}')
+
+        logger.info(f'FORWARD PASS x shape: {x.shape}')
 
         # Fwd prop
         outs = []

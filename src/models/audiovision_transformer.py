@@ -197,7 +197,6 @@ class AudioVisionTransformer(nn.Module):
 
         if v_masks is not None and not isinstance(v_masks, list):
             v_masks = [v_masks]
-
         if a_masks is not None and not isinstance(a_masks, list):
             a_masks = [a_masks]
 
@@ -206,6 +205,7 @@ class AudioVisionTransformer(nn.Module):
         audio_pos_embed = self.audio_pos_embed
         if video_pos_embed is not None:
             video_pos_embed = self.interpolate_pos_encoding(x, video_pos_embed)
+            #audio_pos_embed = self.interpolate_pos_encoding(y, audio_pos_embed)
 
         video_tokens, audio_tokens = self.patch_embed(x, y)
         video_tokens += video_pos_embed
@@ -219,9 +219,10 @@ class AudioVisionTransformer(nn.Module):
             v_masks = torch.cat(v_masks, dim=0)
             a_masks = torch.cat(a_masks, dim=0)
             masks = torch.cat([v_masks, a_masks], dim=1)
+            logger.info(f'FORWARD PASS masks shape: {masks.shape}')
 
         x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
-
+        logger.info(f'FORWARD PASS x shape: {x.shape}')
         # Fwd prop
         outs = []
         for i, blk in enumerate(self.blocks):
@@ -287,6 +288,26 @@ class AudioVisionTransformer(nn.Module):
                 mode='bicubic')
             pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
             return pos_embed
+        
+    def interpolate_pos_encoding_a(self, x, pos_embed):
+
+        _, N, dim = pos_embed.shape
+
+        # If pos_embed already corret size, just return
+        _, _, H, W = x.shape
+        if H == self.input_size and W == self.input_size:
+            return pos_embed
+
+        # Compute scale factor for spatial interpolation
+        npatch = (H // self.patch_size) * (W // self.patch_size)
+        scale_factor = math.sqrt(npatch / N)
+
+        pos_embed = nn.functional.interpolate(
+            pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+            scale_factor=scale_factor,
+            mode='bicubic')
+        pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return pos_embed
 
 
 def vit_tiny(patch_size=16, **kwargs):
