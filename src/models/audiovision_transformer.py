@@ -11,18 +11,19 @@ from functools import partial
 import torch
 import torch.nn as nn
 
-from src.models.utils.patch_embed import PatchEmbed, PatchEmbed3D
+from src.models.utils.patch_embed import PatchEmbed, PatchEmbed3D, AudioVisionPatchEmbed3D
 from src.models.utils.modules import Block
-from src.models.utils.pos_embs import get_2d_sincos_pos_embed, get_3d_sincos_pos_embed
+from src.models.utils.pos_embs import get_1d_sincos_pos_embed, get_2d_sincos_pos_embed, get_2d_sincos_pos_embed_xy, get_3d_sincos_pos_embed
 from src.utils.tensors import trunc_normal_
-from src.masks.utils import apply_masks
+from src.masks.utils import apply_masks, target_apply_masks
 
 from logging import getLogger
 
 logger = getLogger()
 
-class VisionTransformer(nn.Module):
-    """ Vision Transformer """
+
+class AudioVisionTransformer(nn.Module):
+    """ Audio Vision Transformer """
     def __init__(
         self,
         img_size=224,
@@ -61,7 +62,7 @@ class VisionTransformer(nn.Module):
 
         # Tokenize pixels with convolution
         if self.is_video:
-            self.patch_embed = PatchEmbed3D(
+            self.patch_embed = AudioVisionPatchEmbed3D(
                 patch_size=patch_size,
                 tubelet_size=tubelet_size,
                 in_chans=in_chans,
@@ -83,9 +84,13 @@ class VisionTransformer(nn.Module):
 
         # Position embedding
         self.uniform_power = uniform_power
-        self.pos_embed = None
-        self.pos_embed = nn.Parameter(
+        self.video_pos_embed = None
+        logger.info(f'num_patches is: {self.num_patches}')
+        self.video_pos_embed = nn.Parameter(
             torch.zeros(1, self.num_patches, embed_dim),
+            requires_grad=False)
+        self.audio_pos_embed = nn.Parameter(
+            torch.zeros(1, 96, embed_dim), # based on current calculation method, always 96 tokens
             requires_grad=False)
 
         # Attention Blocks
@@ -106,14 +111,18 @@ class VisionTransformer(nn.Module):
         self.norm = norm_layer(embed_dim)
 
         # ------ initialize weights
-        if self.pos_embed is not None:
-            self._init_pos_embed(self.pos_embed.data)  # sincos pos-embed
+        if self.video_pos_embed is not None:
+            self._init_video_pos_embed(self.video_pos_embed.data)  # sincos pos-embed
+            logger.info("video positional embedding intialized")
+        if self.audio_pos_embed is not None:
+            self._init_audio_pos_embed(self.audio_pos_embed.data)
+            logger.info("audio positional embedding initialized")
         self.init_std = init_std
         self.apply(self._init_weights)
         self._rescale_blocks()
 
-    def _init_pos_embed(self, pos_embed):
-        embed_dim = pos_embed.size(-1)
+    def _init_video_pos_embed(self, video_pos_embed):
+        embed_dim = video_pos_embed.size(-1)
         grid_size = self.input_size // self.patch_size
         if self.is_video:
             grid_depth = self.num_frames // self.tubelet_size
@@ -126,7 +135,22 @@ class VisionTransformer(nn.Module):
             )
         else:
             sincos = get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False)
-        pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+        video_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
+
+    def _init_audio_pos_embed(self, audio_pos_embed):
+        embed_dim = audio_pos_embed.size(-1)
+        # based on current implementation, audiospectrogram is always 128 by 192
+        grid_h = 128 // self.patch_size
+        grid_w = 192 // self.patch_size
+        
+        sincos = get_2d_sincos_pos_embed_xy(
+            embed_dim,
+            grid_h,
+            grid_w,
+            cls_token=False
+        )
+        
+        audio_pos_embed.copy_(torch.from_numpy(sincos).float().unsqueeze(0))
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -159,32 +183,46 @@ class VisionTransformer(nn.Module):
     def no_weight_decay(self):
         return {}
 
-    def forward(self, x, masks=None):
+    def forward(self, x, y, masks=None):
         """
         :param x: input image/video
         :param masks: indices of patch tokens to mask (remove)
         """
 
-        if masks is not None and not isinstance(masks, list):
-            masks = [masks]
+        v_masks = None
+        a_masks = None
+        if masks is not None:
+            v_masks = masks[0]
+            a_masks = masks[1]
+
+        if v_masks is not None and not isinstance(v_masks, list):
+            v_masks = [v_masks]
+        if a_masks is not None and not isinstance(a_masks, list):
+            a_masks = [a_masks]
 
         # Tokenize input
-        pos_embed = self.pos_embed
-        if pos_embed is not None:
-            pos_embed = self.interpolate_pos_encoding(x, pos_embed)
-        x = self.patch_embed(x)
-        if pos_embed is not None:
-            x += pos_embed
-        B, N, D = x.shape
+        video_pos_embed = self.video_pos_embed
+        audio_pos_embed = self.audio_pos_embed
+        if video_pos_embed is not None:
+            video_pos_embed = self.interpolate_pos_encoding(x, video_pos_embed)
+            #audio_pos_embed = self.interpolate_pos_encoding(y, audio_pos_embed)
+
+        video_tokens, audio_tokens = self.patch_embed(x, y)
+        video_tokens += video_pos_embed
+        audio_tokens += audio_pos_embed
 
         # Mask away unwanted tokens (if masks provided)
         if masks is not None:
-            x = apply_masks(x, masks)
-            masks = torch.cat(masks, dim=0)
-            logger.info(f'FORWARD PASS masks shape: {masks.shape}')
+            video_tokens = apply_masks(video_tokens, v_masks)
+            audio_tokens = apply_masks(audio_tokens, a_masks)
 
-        logger.info(f'FORWARD PASS x shape: {x.shape}')
+            v_masks = torch.cat(v_masks, dim=0)
+            a_masks = torch.cat(a_masks, dim=0)
+            masks = torch.cat([v_masks, a_masks], dim=1)
+            #logger.info(f'FORWARD PASS masks shape: {masks.shape}')
 
+        x = torch.cat([video_tokens, audio_tokens], dim=1) # combine into multimodal input
+        #logger.info(f'FORWARD PASS x shape: {x.shape}')
         # Fwd prop
         outs = []
         for i, blk in enumerate(self.blocks):
@@ -250,52 +288,72 @@ class VisionTransformer(nn.Module):
                 mode='bicubic')
             pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
             return pos_embed
+        
+    def interpolate_pos_encoding_a(self, x, pos_embed):
+
+        _, N, dim = pos_embed.shape
+
+        # If pos_embed already corret size, just return
+        _, _, H, W = x.shape
+        if H == self.input_size and W == self.input_size:
+            return pos_embed
+
+        # Compute scale factor for spatial interpolation
+        npatch = (H // self.patch_size) * (W // self.patch_size)
+        scale_factor = math.sqrt(npatch / N)
+
+        pos_embed = nn.functional.interpolate(
+            pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+            scale_factor=scale_factor,
+            mode='bicubic')
+        pos_embed = pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return pos_embed
 
 
 def vit_tiny(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_small(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_base(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_large(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_huge(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_giant(patch_size=16, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=1408, depth=40, num_heads=16, mlp_ratio=48/11,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
 
 def vit_gigantic(patch_size=14, **kwargs):
-    model = VisionTransformer(
+    model = AudioVisionTransformer(
         patch_size=patch_size, embed_dim=1664, depth=48, num_heads=16, mpl_ratio=64/13,
         qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
     )

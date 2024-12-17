@@ -7,6 +7,9 @@
 
 import torch.nn as nn
 
+from logging import getLogger
+logger = getLogger()
+
 
 class MultiMaskWrapper(nn.Module):
 
@@ -23,6 +26,23 @@ class MultiMaskWrapper(nn.Module):
         outs = []
         for m in masks:
             outs += [self.backbone(x, masks=m)]
+        return outs
+    
+class AudioVideoMultiMaskWrapper(nn.Module):
+
+    def __init__(self, backbone):
+        super().__init__()
+        self.backbone = backbone
+
+    def forward(self, x, y, masks=None):
+        if masks is None:
+            return self.backbone(x, y)
+
+        if (masks is not None) and not isinstance(masks, list):
+            masks = [masks]
+        outs = []
+        for m in masks:
+            outs += [self.backbone(x, y, masks=m)]
         return outs
 
 
@@ -43,6 +63,9 @@ class PredictorMultiMaskWrapper(nn.Module):
             masks_tgt = [masks_tgt]
 
         outs = []
+        #print("#################")
+        #print(f"len outs: {len(ctxt)}")
+        #print(f"len outs: {ctxt[0][0].shape}")
         for i, (zi, hi, mc, mt) in enumerate(zip(ctxt, tgt, masks_ctxt, masks_tgt)):
             outs += [self.backbone(zi, hi, mc, mt, mask_index=i)]
         return outs

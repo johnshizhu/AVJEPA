@@ -18,7 +18,8 @@ from src.utils.tensors import (
     repeat_interleave_batch
 )
 from src.masks.utils import apply_masks
-
+from logging import getLogger
+logger = getLogger()
 
 class VisionTransformerPredictor(nn.Module):
     """ Vision Transformer """
@@ -183,7 +184,6 @@ class VisionTransformerPredictor(nn.Module):
 
         if not isinstance(masks_ctxt, list):
             masks_ctxt = [masks_ctxt]
-
         if not isinstance(masks_tgt, list):
             masks_tgt = [masks_tgt]
 
@@ -197,7 +197,7 @@ class VisionTransformerPredictor(nn.Module):
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed is not None:
             ctxt_pos_embed = self.predictor_pos_embed.repeat(B, 1, 1)
-            x += apply_masks(ctxt_pos_embed, masks_ctxt)
+            x += apply_masks(ctxt_pos_embed, masks_ctxt) 
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens is None:
@@ -232,10 +232,10 @@ class VisionTransformerPredictor(nn.Module):
             x = blk(x, mask=masks)
         x = self.predictor_norm(x)
 
+
         # Return output corresponding to target tokens
         x = x[:, N_ctxt:]
         x = self.predictor_proj(x)
-
         return x
 
 
@@ -244,3 +244,6 @@ def vit_predictor(**kwargs):
         mlp_ratio=4, qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),
         **kwargs)
     return model
+
+
+

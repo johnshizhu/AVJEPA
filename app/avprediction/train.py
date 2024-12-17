@@ -24,8 +24,8 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
-from torch.nn import DataParallel
 from torch.nn.parallel import DistributedDataParallel
+from torch.nn import DataParallel
 
 from src.datasets.data_manager import init_data
 from src.masks.random_tube import MaskCollator as TubeMaskCollator
@@ -41,13 +41,14 @@ from src.utils.logging import (
     AverageMeter)
 from src.utils.tensors import repeat_interleave_batch
 
-from app.vjepa.utils import (
+from app.avprediction.utils import (
     load_checkpoint,
-    init_video_model,
+    init_audio_video_model,
     init_opt,
+    init_probe_opt
 )
 from app.vjepa.transforms import make_transforms
-
+from src.models.prediction_probes import LinearProbe, AttentiveProbe, FactorizedProbe, ConvolutionalProbe, ProgressiveProbe, AttentionProbe, ConvTemporalProbe, PoolingProbe
 
 # --
 log_timings = True
@@ -205,7 +206,22 @@ def main(args, resume_preempt=False):
     )
 
     # -- init model
-    encoder, predictor = init_video_model(
+    # logger.info("Initializing models")
+    # logger.info(f"uniform_power: {uniform_power}")
+    # logger.info(f'use_mask_tokens: {use_mask_tokens}')
+    # logger.info(f'num_mask_tokens: {len(cfgs_mask)}')
+    # logger.info(f'zero_init_mask_tokens: {zero_init_mask_tokens}')
+    # logger.info(f'device: {device}')
+    # logger.info(f'patch_size: {patch_size}')
+    # logger.info(f'num_frames: {num_frames}')
+    # logger.info(f'tubelet_size: {tubelet_size}')
+    # logger.info(f'model_name: {model_name}')
+    # logger.info(f'crop_size: {crop_size}')
+    # logger.info(f'pred_depth: {pred_depth}')
+    # logger.info(f'pred_embed_dim: {pred_embed_dim}')
+    # logger.info(f'use_sdpa: {use_sdpa}')
+    # print(1/0)
+    encoder, predictor = init_audio_video_model(
         uniform_power=uniform_power,
         use_mask_tokens=use_mask_tokens,
         num_mask_tokens=len(cfgs_mask),
@@ -249,6 +265,7 @@ def main(args, resume_preempt=False):
         crop_size=crop_size)
 
     # -- init data-loaders/samplers
+    print(f"dataset_type is: {dataset_type}")
     (unsupervised_loader,
      unsupervised_sampler) = init_data(
          data=dataset_type,
@@ -269,6 +286,7 @@ def main(args, resume_preempt=False):
          pin_mem=pin_mem,
          rank=rank,
          log_dir=folder if log_resource_util_data else None)
+    #logger.info(f'init_data complete...')
     try:
         _dlen = len(unsupervised_loader)
     except Exception:  # Different interface for webdataset
@@ -305,6 +323,7 @@ def main(args, resume_preempt=False):
 
     start_epoch = 0
     # -- load training checkpoint
+    logger.info("LOADING CHECKPOINTS")
     if load_model or os.path.exists(latest_path):
         (
             encoder,
@@ -325,16 +344,52 @@ def main(args, resume_preempt=False):
             wd_scheduler.step()
             next(momentum_scheduler)
             mask_collator.step()
+    
+    logger.info("Freezing encoder and predictor weights")
+    for p in encoder.parameters():
+        p.requires_grad = False
+    for p in predictor.parameters():
+        p.requires_grad = False
+    
+    # -- Initializing probe
+    # probe = LinearProbe()
+    # logger.info(f'Linear Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    # probe = AttentiveProbe()
+    # logger.info(f'Attentive Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    # probe = FactorizedProbe()
+    # logger.info(f'Factorized Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    # probe = ProgressiveProbe()
+    # probe = probe.to(device)
+    # logger.info(f'Progressive Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    
+    probe_checkpoint = torch.load(r"C:\Users\johns\OneDrive\Desktop\jepa_logs\avjepaSmall-prediction-v3-latest.pth.tar", map_location='cpu')
+    probe = AttentionProbe(emb_dim=384)
+    pretrained_dict = probe_checkpoint['probe']    
+    msg = probe.load_state_dict(pretrained_dict)
+    logger.info(f'msg: {msg}')
+    probe = probe.to(device)
+
+    logger.info("Freezing encoder and predictor weights")
+    for p in probe.parameters():
+        p.requires_grad = False
+
+    logger.info(f'AttentionProbe Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    # probe = PoolingProbe()
+    # logger.info(f'PoolingProbe Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    # probe = ConvTemporalProbe()
+    # logger.info(f'ConvTemporalProbe Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    #probe = ConvolutionalProbe()
+    #logger.info(f'Convolutional Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
+    logger.info(f'Encoder Trainable Parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad)}')
+    logger.info(f'Predictor Trainable Parameters: {sum(p.numel() for p in predictor.parameters() if p.requires_grad)}')
 
     def save_checkpoint(epoch, path):
         if rank != 0:
             return
         save_dict = {
-            'encoder': encoder.state_dict(),
-            'predictor': predictor.state_dict(),
+            'probe': probe.state_dict(),
             'opt': optimizer.state_dict(),
             'scaler': None if scaler is None else scaler.state_dict(),
-            'target_encoder': target_encoder.state_dict(),
             'epoch': epoch,
             'loss': loss_meter.avg,
             'batch_size': batch_size,
@@ -346,21 +401,24 @@ def main(args, resume_preempt=False):
         except Exception as e:
             logger.info(f'Encountered exception when saving checkpoint: {e}')
 
-    logger.info('Initializing loader...')
-    loader = iter(unsupervised_loader)
 
-    if skip_batches > 0:
-        logger.info(f'Skip {skip_batches} batches')
-        unsupervised_sampler.set_epoch(start_epoch)
-        for itr in range(skip_batches):
-            if itr % 10 == 0:
-                logger.info(f'Skip {itr}/{skip_batches} batches')
-            try:
-                udata = next(loader)
-            except Exception:
-                loader = iter(unsupervised_loader)
-                udata = next(loader)
-
+    # -- probe optimizer
+    logger.info(f'Initializing Probe Optimizers')
+    optimizer, scaler, scheduler, wd_scheduler = init_probe_opt(
+        probe=probe,
+        wd=wd,
+        final_wd=final_wd,
+        start_lr=start_lr,
+        ref_lr=lr,
+        final_lr=final_lr,
+        iterations_per_epoch=ipe,
+        warmup=warmup,
+        num_epochs=num_epochs,
+        ipe_scale=ipe_scale,
+        mixed_precision=mixed_precision,
+        betas=betas,
+        eps=eps)
+    #logger.info('Beginning Training Loop...')
     # -- TRAINING LOOP
     for epoch in range(start_epoch, num_epochs):
         logger.info('Epoch %d' % (epoch + 1))
@@ -378,8 +436,8 @@ def main(args, resume_preempt=False):
         wall_time_meter = AverageMeter()
 
         for itr in range(ipe):
+            #logger.info(f'Beginning Iteration {itr}...')
             itr_start_time = time.time()
-
             try:
                 udata, masks_enc, masks_pred = next(loader)
             except Exception:
@@ -388,120 +446,170 @@ def main(args, resume_preempt=False):
                 udata, masks_enc, masks_pred = next(loader)
             assert len(masks_enc) == len(masks_pred), \
                 'Currently require num encoder masks = num predictor masks'
-
             def load_clips():
-                # -- unsupervised video clips
-                # Put each clip on the GPU and concatenate along batch
-                # dimension
-                clips = torch.cat([u.to(device, non_blocking=True) for u in udata[0]], dim=0)
+                # Normalize clips to [0,1] range
+                clips = torch.cat([normalize_tensor(u.to(device, non_blocking=True)) for u in udata[0]], dim=0)
 
-                # Put each mask-enc/mask-pred pair on the GPU and reuse the
-                # same mask pair for each clip
+                # Process masks
                 _masks_enc, _masks_pred = [], []
                 for _me, _mp in zip(masks_enc, masks_pred):
                     _me = _me.to(device, non_blocking=True)
                     _mp = _mp.to(device, non_blocking=True)
                     _me = repeat_interleave_batch(_me, batch_size, repeat=num_clips)
-                    _mp = repeat_interleave_batch(_mp, batch_size, repeat=num_clips)
+                    _mp = repeat_interleave_batch(_mp, batch_size, repeat=num_clips) 
                     _masks_enc.append(_me)
                     _masks_pred.append(_mp)
 
                 return (clips, _masks_enc, _masks_pred)
-            
+
+            def normalize_tensor(tensor):
+                tensor = tensor - tensor.min()
+                tensor = tensor / (tensor.max() + 1e-8)
+                return tensor
+
+            # logger.info(f'udata length is: {len(udata)}')
+            # logger.info(f'udata[0] len is: {len(udata[0])}')
+            # logger.info(f'udata[1] shape is: {udata[1].shape}')
+            # logger.info(f'udata[2] len is: {len(udata[2])}')
+            # logger.info(f'udata[0][0] shape is: {udata[0][0].shape}')
+            # logger.info(f'udata[2][0] shape is: {udata[2][0].shape}')
+            # logger.info(f'udata[3] shape is: {udata[3].shape}')
+
+            # logger.info(f'masks_enc type is: {type(masks_enc)}')
+            # logger.info(f'masks_pred type is: {type(masks_pred)}')
+
+
             clips, masks_enc, masks_pred = load_clips()
+
+
+            # print("\n")
+            # logger.info(f'clips shape is: {clips.shape}')
+            # logger.info(f'masks_enc length is: {len(masks_enc)}')
+            # logger.info(f'masks_enc[0] shape is: {masks_enc[0].shape}')
+            # logger.info(f'masks_enc[1] shape is: {masks_enc[1].shape}')
+            # logger.info(f'masks_pred length is: {len(masks_pred)}')
+            # logger.info(f'masks_pred[0] shape is: {masks_pred[0].shape}')
+            # logger.info(f'masks_pred[1] shape is: {masks_pred[1].shape}')
+            # print("\n")
+
+            # At this point the video has not been altered in any way
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc[_i][0].size(-1))
 
+            # Audiospectrogram Data Edit
+            asgram = udata[3].unsqueeze(1)
+
             def train_step():
+                #logger.info("Beginning Train Step...")
                 _new_lr = scheduler.step()
                 _new_wd = wd_scheduler.step()
                 # --
 
-                def forward_target(c):
-                    """
-                    Returns list of tensors of shape [B, N, D], one for each
-                    mask-pred.
-                    """
-                    with torch.no_grad():
-                        h = target_encoder(c)
-                        h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]
-                        # -- create targets (masked regions of h)
-                        h = apply_masks(h, masks_pred, concat=False)
-                        for i, m in enumerate(h):
-                            logger.info(f'h[{i}] shape is: {m.shape}')
-                        return h
-
-                def forward_context(c, h):
-                    """
-                    Returns list of tensors of shape [B, N, D], one for each
-                    mask-pred.
-                    c type is: tensor
-                    h type is: list
-                    masks_enc type is: list
-                    """
-                    logger.info(f'-----Context-----')  
-                    logger.info(f'c shape is: {c.shape}')
-                    logger.info(f'h type is: {type(h)}')
-                    for i, m in enumerate(masks_enc):
-                        logger.info(f'encoder masks_enc[{i}] shape: {m.shape}')
-
-                    z = encoder(c, masks_enc)
+                def forward_frozen(c, a):
                     
-                    logger.info(f'z output: {type(z)}')
-                    logger.info(f'z len is: {len(z)}')
+                    # Pass the clip and associated data through the encoder
+                    #logger.info("Running encoder...")
+                    z = encoder(c, a, masks_enc)
 
+                    # Pass the encoded features through the predictor
+                    #logger.info("Running predictor...")
+                    z = predictor(z, None, masks_enc, masks_pred)
+                    return z[0]
 
-                    logger.info(f'(pre predictor) z type is: {type(z)}')
-                    logger.info(f'(pre predictor) h type is: {type(h)}')
-                    logger.info(f'(pre predictor) masks_enc type is: {type(masks_enc)}')
-                    logger.info(f'(pre predictor) masks_pred type is: {type(masks_pred)}')
+                def forward_probe(z):
+                    return probe(z)
 
-                    for i, m in enumerate(z):
-                        logger.info(f'(pre predictor) z[{i}] shape: {m.shape}')
-                    for i, m in enumerate(h):
-                        logger.info(f'(pre predictor) h[{i}] shape: {m.shape}')
-                    for i, m in enumerate(masks_enc):
-                        logger.info(f'(pre predictor) masks_enc[{i}] shape: {m.shape}')
-                    for i, m in enumerate(masks_pred):
-                        logger.info(f'(pre predictor) masks_pred[{i}] shape: {m.shape}')
-                    z = predictor(z, h, masks_enc, masks_pred)
-                    return z
-
-                def loss_fn(z, h):
+                def loss_fn(output, original):
+                    #logger.info(f"output shape is: {output.shape}")
+                    #logger.info(f'original shape is: {original.shape}')
                     loss = 0.
-                    logger.info(f'z type is: {type(z)}')
-                    logger.info(f'h type is: {type(h)}')
-                    logger.info(f'z len is: {len(z)}')
-                    logger.info(f'h len is: {len(h)}')
-                    for i, m in enumerate(z):
-                        logger.info(f'z[{i}] shape: {m.shape}')
-                    for i, m in enumerate(h):
-                        logger.info(f'h[{i}] shape: {m.shape}')
                     # Compute loss and accumulate for each mask-enc/mask-pred pair
-                    for zi, hi in zip(z, h):
-                        loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
-                    logger.info(f'MASKS_PREV LEN: {len(masks_pred)}')
-                    loss /= len(masks_pred)
-                    logger.info(f'loss is: {loss}')
-                    print(1/0)
+                    loss = F.mse_loss(output, original)
                     return loss
 
                 def reg_fn(z):
                     return sum([torch.sqrt(zi.var(dim=1) + 0.0001) for zi in z]) / len(z)
 
                 # Step 1. Forward
+                #logger.info('Beginning Forward Pass...')
                 loss_jepa, loss_reg = 0., 0.
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
-                    h = forward_target(clips)
-                    z = forward_context(clips, h)
-                    loss_jepa = loss_fn(z, h)  # jepa prediction loss
+                    #logger.info(f'c type is: {type(clips)}')
+                    #logger.info(f'c shape is: {clips.shape}\n')
+                    #logger.info(f'clips shape is: {clips.shape}')
+                    #logger.info(f'asgram shape is: {asgram.shape}')
+                    z = forward_frozen(clips, asgram)
+                    #logger.info(f'z shape is: {z.shape}')
+
+                    o = forward_probe(z)
+                    loss_jepa = loss_fn(o, clips) 
+                    #logger.info(f'o type is: {type(o)}')
+                    #logger.info(f'o shape is: {o.shape}')
+
+                    # #logger.info(f'forward_context done')
+                    # loss_jepa = loss_fn(o, clips)  # jepa prediction loss
+                    # logger.info(f'loss is: {loss_jepa}')
+                    logger.info(f'masks_enc len is: {len(masks_enc)}')
+                    logger.info(f'masks_pred len is: {len(masks_pred)}')
+                    logger.info(f'masks_enc[0] shape is: {masks_enc[0].shape}')
+                    logger.info(f'masks_pred[0] shape is: {masks_pred[0].shape}')
+                    logger.info(f'masks_enc[1] shape is: {masks_enc[1].shape}')
+                    logger.info(f'masks_pred[1] shape is: {masks_pred[1].shape}')
+                    
+                    import matplotlib.pyplot as plt
+                    import numpy as np
+
+                    def normalize_tensor(tensor):
+                        tensor = tensor - tensor.min()
+                        tensor = tensor / (tensor.max() + 1e-8)
+                        return tensor
+
+                    fig, axes = plt.subplots(3, 5, figsize=(25, 15))
+
+                    for i in range(2):
+                        # Get images
+                        image1 = clips[i, :, 0, :, :].permute(1, 2, 0).detach().cpu().numpy()
+                        image2 = o[i, :, 0, :, :].permute(1, 2, 0).detach().cpu().float().numpy()
+                        
+                        # Create masked version by setting masked patches to black
+                        mask = masks_enc[0][i, 0].bool().cpu().numpy()
+                        masked_img = image1.copy()
+                        masked_img[mask] = 0  # Set to black to represent removed tokens
+                        
+                        # Get normalized versions
+                        image1_norm = normalize_tensor(torch.tensor(image1)).numpy()
+                        image2_norm = normalize_tensor(torch.tensor(image2)).numpy()
+                        
+                        axes[i, 0].imshow(image1)
+                        axes[i, 0].axis('off')
+                        axes[i, 0].set_title(f"Vid{i} Original")
+                        
+                        axes[i, 1].imshow(masked_img) 
+                        axes[i, 1].axis('off')
+                        axes[i, 1].set_title(f"Vid{i} Masked (Black = Removed)")
+                        
+                        axes[i, 2].imshow(image2)
+                        axes[i, 2].axis('off')
+                        axes[i, 2].set_title(f"Vid{i} Prediction")
+                        
+                        axes[i, 3].imshow(image1_norm)
+                        axes[i, 3].axis('off')
+                        axes[i, 3].set_title(f"Vid{i} Original (Norm)")
+                        
+                        axes[i, 4].imshow(image2_norm)
+                        axes[i, 4].axis('off')
+                        axes[i, 4].set_title(f"Vid{i} Prediction (Norm)")
+
+                    plt.tight_layout()
+                    plt.show()
+
+
+                    print(1/0)
                     pstd_z = reg_fn(z)  # predictor variance across patches
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
-                logger.info(f'LOSS IS: {loss}')
-                print(1/0)
-
+                #logger.info(f'Loss is: {loss}')
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.
                 if mixed_precision:
