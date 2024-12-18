@@ -336,12 +336,15 @@ def main(args, resume_preempt=False):
         p.requires_grad = False
     
     # -- Initializing probe
-    #probe_checkpoint = torch.load(r"C:\Users\johns\OneDrive\Desktop\jepa_logs\avjepaSmall-prediction-v3-latest.pth.tar", map_location='cpu')
+    probe_checkpoint = torch.load(r"C:\Users\johns\OneDrive\Desktop\jepa_logs\avjepaSmall-prediction-testing-FIRSTTRY-latest.pth.tar", map_location='cpu')
     probe = AttentionProbe(emb_dim=384)
-    #pretrained_dict = probe_checkpoint['probe']    
-    #msg = probe.load_state_dict(pretrained_dict)
-    #logger.info(f'msg: {msg}')
+    pretrained_dict = probe_checkpoint['probe']    
+    msg = probe.load_state_dict(pretrained_dict)
+    logger.info(f'msg: {msg}')
     probe = probe.to(device)
+    logger.info("Freezing encoder and predictor weights")
+    for p in probe.parameters():
+        p.requires_grad = False
 
     logger.info(f'AttentionProbe Parameters: {sum(p.numel() for p in probe.parameters() if p.requires_grad)}')
     logger.info(f'Encoder Trainable Parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad)}')
@@ -449,8 +452,6 @@ def main(args, resume_preempt=False):
             asgram = udata[3].unsqueeze(1).to(device)
 
             def train_step():
-                _new_lr = scheduler.step()
-                _new_wd = wd_scheduler.step()
 
                 def forward_frozen(c, a):
                     
@@ -482,155 +483,60 @@ def main(args, resume_preempt=False):
                         res_a.append(a)
                     return res_v, res_a
 
-                def loss_fn(o_video, o_audio, clips, asgram):
-                    loss = 0.
-                    for i in range(len(o_video)):
-                        loss += F.mse_loss(o_video[i], clips)
-                        loss += F.mse_loss(o_audio[i], asgram)
-                    loss /= len(o_video) # average across num masks
-                    return loss
-
-                def reg_fn(z):
-                    return sum([torch.sqrt(zi.var(dim=1) + 0.0001) for zi in z]) / len(z)
-
                 # Step 1. Forward
-                loss_jepa, loss_reg = 0., 0.
                 masks_enc = list(zip(masks_enc_v, masks_enc_a))
                 masks_pred = list(zip(masks_pred_v, masks_pred_a))
+                logger.info(f'masks_pred[0] video: {masks_pred[0][0]}')
+                logger.info(f'masks_pred[0] audio: {masks_pred[0][1]}')
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
                     ctxt, pred = forward_frozen(clips, asgram)
                     emb_tokens = rebuild_tokens(ctxt, pred, masks_enc, masks_pred)
                     o_v, o_a = forward_probe(emb_tokens)
+                    import matplotlib.pyplot as plt
+                    import numpy as np
 
-                    loss_jepa = loss_fn(o_v, o_a, clips, asgram) 
-                    logger.info(f'loss is: {loss_jepa}')
-                    #pstd_z = reg_fn(z)  # predictor variance across patches
-                    #loss_reg += torch.mean(F.relu(1.-pstd_z))
-                loss = loss_jepa #+ reg_coeff * loss_reg
-
-                # Step 2. Backward & step
-                _enc_norm, _pred_norm = 0., 0.
-                if mixed_precision:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                else:
-                    loss.backward()
-                if (epoch > warmup) and (clip_grad is not None):
-                    _enc_norm = torch.nn.utils.clip_grad_norm_(encoder.parameters(), clip_grad)
-                    _pred_norm = torch.nn.utils.clip_grad_norm_(predictor.parameters(), clip_grad)
-                if mixed_precision:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                grad_stats = grad_logger(encoder.named_parameters())
-                grad_stats.global_norm = float(_enc_norm)
-                grad_stats_pred = grad_logger(predictor.named_parameters())
-                grad_stats_pred.global_norm = float(_pred_norm)
-                optimizer.zero_grad()
-                optim_stats = adamw_logger(optimizer)
-
-                # Step 3. momentum update of target encoder
-                m = next(momentum_scheduler)
-                with torch.no_grad():
-                    for param_q, param_k in zip(encoder.parameters(), target_encoder.parameters()):
-                        param_k.data.mul_(m).add_((1.-m) * param_q.detach().data)
-
-                return (
-                    float(loss),
-                    float(loss_jepa),
-                    float(loss_reg),
-                    _new_lr,
-                    _new_wd,
-                    grad_stats,
-                    grad_stats_pred,
-                    optim_stats,
-                )
-            (loss, loss_jepa, loss_reg, _new_lr, _new_wd, grad_stats, grad_stats_pred, optim_stats,), gpu_etime_ms = gpu_timer(train_step)
-            iter_elapsed_time_ms = (time.time() - itr_start_time) * 1000.
-            loss_meter.update(loss)
-            input_var = float(AllReduce.apply(clips.view(clips.shape[0], -1).var(dim=1).mean(dim=0)))
-            input_var_min = float(AllReduce.apply(torch.min(clips.view(clips.shape[0], -1).var(dim=1))))
-            input_var_meter.update(input_var)
-            input_var_min_meter.update(input_var_min)
-            jepa_loss_meter.update(loss_jepa)
-            reg_loss_meter.update(loss_reg)
-            gpu_time_meter.update(gpu_etime_ms)
-            wall_time_meter.update(iter_elapsed_time_ms)
-
-            # -- Logging
-            def log_stats():
-                csv_logger.log(
-                    epoch + 1,
-                    itr,
-                    loss,
-                    loss_jepa,
-                    loss_reg,
-                    grad_stats.global_norm,
-                    grad_stats_pred.global_norm,
-                    gpu_etime_ms,
-                    iter_elapsed_time_ms)
-                if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
-                    logger.info(
-                        '[%d, %5d] loss: %.3f | p%.3f r%.3f | '
-                        'input_var: %.3f %.3f | '
-                        'masks: %s '
-                        '[wd: %.2e] [lr: %.2e] '
-                        '[mem: %.2e] '
-                        '[gpu: %.1f ms]'
-                        '[wall: %.1f ms]'
-                        % (epoch + 1, itr,
-                           loss_meter.avg,
-                           jepa_loss_meter.avg,
-                           reg_loss_meter.avg,
-                           input_var_meter.avg,
-                           input_var_min_meter.avg,
-                           '[' + ', '.join(['%.1f' % m.avg for m in mask_meters]) + ']',
-                           _new_wd,
-                           _new_lr,
-                           torch.cuda.max_memory_allocated() / 1024.0**2,
-                           gpu_time_meter.avg,
-                           wall_time_meter.avg))
-
-                    if optim_stats is not None:
-                        logger.info(
-                            '[%d, %5d] first moment: %.2e [%.2e %.2e] second moment: %.2e [%.2e %.2e]'
-                            % (epoch + 1, itr,
-                               optim_stats.get('exp_avg').avg,
-                               optim_stats.get('exp_avg').min,
-                               optim_stats.get('exp_avg').max,
-                               optim_stats.get('exp_avg_sq').avg,
-                               optim_stats.get('exp_avg_sq').min,
-                               optim_stats.get('exp_avg_sq').max))
-
-                    if grad_stats is not None:
-                        logger.info(
-                            '[%d, %5d] enc_grad_stats: f/l[%.2e %.2e] mn/mx(%.2e, %.2e) %.2e'
-                            % (epoch + 1, itr,
-                               grad_stats.first_layer,
-                               grad_stats.last_layer,
-                               grad_stats.min,
-                               grad_stats.max,
-                               grad_stats.global_norm))
-
-                    if grad_stats_pred is not None:
-                        logger.info(
-                            '[%d, %5d] pred_grad_stats: f/l[%.2e %.2e] mn/mx(%.2e, %.2e) %.2e'
-                            % (epoch + 1, itr,
-                               grad_stats_pred.first_layer,
-                               grad_stats_pred.last_layer,
-                               grad_stats_pred.min,
-                               grad_stats_pred.max,
-                               grad_stats_pred.global_norm))
-            log_stats()
-            assert not np.isnan(loss), 'loss is nan'
-
-        # -- Save Checkpoint
-        logger.info('avg. loss %.3f' % loss_meter.avg)
-        # -- Save Last
-        if epoch % checkpoint_freq == 0 or epoch == (num_epochs - 1):
-            save_checkpoint(epoch + 1, latest_path)
-            if save_every_freq > 0 and epoch % save_every_freq == 0:
-                save_every_file = f'{tag}-e{epoch}.pth.tar'
-                save_every_path = os.path.join(folder, save_every_file)
-                save_checkpoint(epoch + 1, save_every_path)
+                    def plot_video_and_audio(clips, o_v, asgram, o_a, selected_frame=5):
+                        clips = clips.to(dtype=torch.float32).detach().cpu().squeeze(0)
+                        asgram = asgram.to(dtype=torch.float32).detach().cpu().squeeze(0).squeeze(0)
+                        o_v = [tensor.to(dtype=torch.float32).detach().cpu() for tensor in o_v]
+                        o_a = [tensor.to(dtype=torch.float32).detach().cpu() for tensor in o_a]
+                        
+                        # Prepare the fifth frame and spectrograms for plotting
+                        clips_fifth = clips[:, selected_frame, :, :]
+                        o_v_0_fifth = o_v[0][:, selected_frame, :, :]
+                        clips_fifth = clips_fifth.permute(1, 2, 0).numpy()
+                        o_v_0_fifth = o_v_0_fifth.permute(1, 2, 0).numpy()
+                        
+                        # Create figure with subplots
+                        fig = plt.figure(figsize=(12, 6))
+                        
+                        # Plot the original audio spectrogram
+                        plt.subplot(2, 2, 1)
+                        plt.imshow(asgram, cmap='gray')
+                        plt.title("Original Audio Spectrogram")
+                        plt.axis("off")
+                        
+                        # Plot the reconstructed audio spectrogram
+                        plt.subplot(2, 2, 2)
+                        plt.imshow(o_a[0].squeeze(0), cmap='gray')
+                        plt.title("Reconstructed Audio Spectrogram")
+                        plt.axis("off")
+                        
+                        # Plot the original video fifth frame
+                        plt.subplot(2, 2, 3)
+                        plt.imshow(clips_fifth)
+                        plt.title(f"Original Video")
+                        plt.axis("off")
+                        
+                        # Plot the reconstructed video fifth frame
+                        plt.subplot(2, 2, 4)
+                        plt.imshow(o_v_0_fifth)
+                        plt.title(f"Reconstructed Video")
+                        plt.axis("off")
+                        
+                        plt.tight_layout()
+                        plt.show()
+                        return fig
+                    
+                    plot_video_and_audio(clips, o_v[0], asgram, o_a[0])
+            train_step()

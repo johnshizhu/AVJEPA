@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
+logger = logging.getLogger()
+
 
 class LinearProbe(nn.Module):
     def __init__(self):
@@ -273,7 +276,7 @@ class PoolingProbe(nn.Module):
         return x
 
 class AttentionProbe(nn.Module):
-    def __init__(self, emb_dim = 192, num_heads=8):
+    def __init__(self, emb_dim=384, num_heads=8):
         super().__init__()
         
         hidden_dim = 256
@@ -281,41 +284,68 @@ class AttentionProbe(nn.Module):
         # Initial feature projection
         self.input_proj = nn.Linear(emb_dim, hidden_dim)
         
-        # Multi-head self-attention
-        self.self_attention = nn.MultiheadAttention(
+        # Separate attention for video and audio
+        self.video_attention = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=num_heads,
             batch_first=True
         )
         
-        # Learnable query for pooling
-        self.query = nn.Parameter(torch.randn(1, 16, hidden_dim))
+        self.audio_attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            batch_first=True
+        )
         
-        # Final projection to video
+        # Learnable queries for video and audio
+        self.video_query = nn.Parameter(torch.randn(1, 16, hidden_dim))  # 16 frames
+        self.audio_query = nn.Parameter(torch.randn(1, 12, hidden_dim))  # 12 segments for spectrogram
+        
+        # Final projections
         self.to_video = nn.Sequential(
-            nn.Linear(hidden_dim, 3 * 224 * 224)
+            nn.Linear(hidden_dim, 3 * 224 * 224)  # Project to full resolution frame
+        )
+        
+        self.to_audio = nn.Sequential(
+            nn.Linear(hidden_dim, 128 * 16)  # Project to spectrogram segments
         )
         
     def forward(self, x):
+
         batch_size = x.shape[0]
         
+        # Split video and audio tokens
+        video_tokens = x[:, :1568, :]  # First 1568 tokens for video
+        audio_tokens = x[:, 1568:, :]  # Last 96 tokens for audio
+        
         # Project features
-        x = self.input_proj(x)  # [B, L, 256]
+        video_features = self.input_proj(video_tokens)
+        audio_features = self.input_proj(audio_tokens)
         
-        # Self-attention to process sequence
-        x, _ = self.self_attention(x, x, x)
+        # Process video tokens
+        video_features, _ = self.video_attention(video_features, video_features, video_features)
+        video_query = self.video_query.expand(batch_size, -1, -1)
+        video_features, _ = self.video_attention(video_query, video_features, video_features)
         
-        # Expand query to batch size
-        query = self.query.expand(batch_size, -1, -1)
+        # Process audio tokens
+        audio_features, _ = self.audio_attention(audio_features, audio_features, audio_features)
+        audio_query = self.audio_query.expand(batch_size, -1, -1)
+        audio_features, _ = self.audio_attention(audio_query, audio_features, audio_features)
         
-        # Cross-attention to get fixed number of tokens
-        x, _ = self.self_attention(query, x, x)  # [B, 16, 256]
+        # Generate video output [B, 16, 3*224*224]
+        video_out = self.to_video(video_features)
+        # Reshape to [B, 3, 16, 224, 224]
+        video_out = video_out.reshape(batch_size, 16, 3, 224, 224)
+        video_out = video_out.permute(0, 2, 1, 3, 4)
         
-        # Project each token to video frame
-        x = self.to_video(x)  # [B, 16, 3*224*224]
-        x = x.reshape(batch_size, 3, 16, 224, 224)
+        # Generate audio output [B, 12, 128*16]
+        audio_out = self.to_audio(audio_features)
+        # Reshape to [B, 1, 128, 192]
+        audio_out = audio_out.reshape(batch_size, 12, 128, 16)
+        audio_out = audio_out.permute(0, 1, 2, 3)
+        audio_out = audio_out.reshape(batch_size, 1, 128, 192)
         
-        return x
+        return video_out, audio_out
 
 class ConvTemporalProbe(nn.Module):
     def __init__(self):

@@ -424,20 +424,7 @@ def main(args, resume_preempt=False):
 
             clips, masks_enc_v, masks_enc_a, masks_pred_v, masks_pred_a = load_clips()
 
-            # Audiospectrogram Data Edit
-            asgram = udata[3].unsqueeze(1)
-
-            # logger.info(f'clips  shape: {clips.shape}')
-            # logger.info(f'asgram shape: {asgram.shape}')
-            # for i, m in enumerate(masks_enc_v):
-            #     logger.info(f'masks_enc_v[{i}] shape: {m.shape}')
-            # for i, m in enumerate(masks_enc_a):
-            #     logger.info(f'masks_enc_a[{i}] shape: {m.shape}')
-            # for i, m in enumerate(masks_pred_v):
-            #     logger.info(f'masks_pred_v[{i}] shape: {m.shape}')
-            # for i, m in enumerate(masks_pred_a):
-            #     logger.info(f'masks_pred_a[{i}] shape: {m.shape}')
-
+            asgram = udata[3].unsqueeze(1) # audiospectrogram edit
 
             for _i, m in enumerate(mask_meters):
                 m.update(masks_enc_v[_i][0].size(-1))
@@ -456,22 +443,13 @@ def main(args, resume_preempt=False):
                     Returns list of tensors of shape [B, N, D], one for each
                     mask-pred.
                     """
-                    #logger.info(f'-----Target-----')
                     with torch.no_grad():
-                        #logger.info(f'target encoder input shape: {c.shape}')
                         h = target_encoder(c, a)
-                        #logger.info(f'target encoder output shape: {h.shape}')
                         h = F.layer_norm(h, (h.size(-1),))  # normalize over feature-dim  [B, N, D]                        
                         video_tokens, audio_tokens = torch.split(h, [1568, 96], dim=1)
                         # -- masking pred tokens
-                        #logger.info(f'target encoder video shape: {video_tokens.shape}')
-                        #logger.info(f'target encoder audio shape: {audio_tokens.shape}')
                         h_v = apply_masks(video_tokens, masks_pred_v, concat=False)
                         h_a = apply_masks(audio_tokens, masks_pred_a, concat=False)
-                        # for i, m in enumerate(h_v):
-                        #     logger.info(f'h_v[{i}] shape is: {m.shape}')
-                        # for i, m in enumerate(h_a):
-                        #     logger.info(f'h_a[{i}] shape is: {m.shape}')
                         out = []
                         for i in range(len(h_v)):
                             out.append(torch.cat([h_v[i], h_a[i]], dim=1))
@@ -490,20 +468,11 @@ def main(args, resume_preempt=False):
                     """
                     masks_enc = list(zip(masks_enc_v, masks_enc_a))
                     masks_pred = list(zip(masks_pred_v, masks_pred_a))
-                    h = list(zip(h_v, h_a))
+                    h = list(zip(h_v, h_a)) # target tokens
 
-                    logger.info(f'-----Context-----')
-                    logger.info(f'c shape: {c.shape}')
-                    logger.info(f'a shape: {a.shape}')
-                    for i, m in enumerate(masks_enc):
-                        logger.info(f'masks_enc[{i}] shape: 0: {m[0].shape} 1: {m[1].shape}')
-
-                    z = encoder(c, a, masks_enc) # applying both v&a token masks
+                    z = encoder(c, a, masks_enc)
                     
-                    logger.info(f'z output: {type(z)}')
-                    logger.info(f'z len is: {len(z)}')
-                    for i, m in enumerate(z):
-                        logger.info(f'z[{i}] shape: {m.shape}')
+                    #-- splitting video and audio tokens post-encoder-embedding
                     v_size = []
                     a_size = []
                     for i in masks_enc:
@@ -511,69 +480,27 @@ def main(args, resume_preempt=False):
                         _, a_size_e = i[1].shape
                         v_size.append(v_size_e)
                         a_size.append(a_size_e)
-
                     z_t = []
                     for index, i in enumerate(z):
                         z_v, z_a = torch.split(i, [v_size[index], a_size[index]], dim=1)
                         z_t.append((z_v, z_a))
-
-                    # logger.info(f'(pre predictor) z_t len: {len(z_t)}')
-                    # logger.info(f'(pre predictor) h len: {len(h)}')
-                    # logger.info(f'(pre predictor) masks_enc len: {len(masks_enc)}')
-                    # logger.info(f'(pre predictor) masks_pred len: {len(masks_pred)}')
-
-                    # for i, m in enumerate(z_t):
-                    #     logger.info(f'pre predictor z_t[{i}][0] shape: {m[0].shape}')
-                    #     logger.info(f'pre predictor z_t[{i}][1] shape: {m[1].shape}')
-                    # for i, m in enumerate(h):
-                    #     logger.info(f'pre predictor h[{i}][0] shape: {m[0].shape}')
-                    #     logger.info(f'pre predictor h[{i}][1] shape: {m[1].shape}')
-                    # for i, m in enumerate(masks_enc):
-                    #     logger.info(f'pre predictor masks_enc[{i}][0] shape: {m[0].shape}')
-                    #     logger.info(f'pre predictor masks_enc[{i}][1] shape: {m[1].shape}')
-                    # for i, m in enumerate(masks_pred):
-                    #     logger.info(f'pre predictor masks_pred[{i}][0] shape: {m[0].shape}')
-                    #     logger.info(f'pre predictor masks_pred[{i}][1] shape: {m[1].shape}')
-
                     z = predictor(z_t, h, masks_enc, masks_pred)
-                    #logger.info(f'predictor result shape: {z[0].shape}')
                     return z
 
                 def loss_fn(z, h):
-                    # logger.info(f'z[0] shape is: {z[0].shape}')
-                    # logger.info(f'h shape is: {h.shape}')
                     loss = 0.
-                    # Compute loss and accumulate for each mask-enc/mask-pred pair
-                    # logger.info(f'z type is: {type(z)}')
-                    # logger.info(f'h type is: {type(h)}')
-                    # logger.info(f'z len is: {len(z)}')
-                    # logger.info(f'h len is: {len(h)}')
-                    # for i, m in enumerate(z):
-                    #     logger.info(f'z[{i}] shape: {m.shape}')
-                    # for i, m in enumerate(h):
-                    #     logger.info(f'h[{i}] shape: {m.shape}')
                     for zi, hi in zip(z, h):
                         loss += torch.mean(torch.abs(zi - hi)**loss_exp) / loss_exp
-                    #logger.info(f'MASKS_PREV_V LEN: {len(masks_pred_v)}')
                     loss /= len(masks_pred_v)
-                    #logger.info(f'loss is: {loss}')
-                    #print(1/0)
-                    #logger.info(f'output loss is: {loss}')
                     return loss
 
                 def reg_fn(z):
                     return sum([torch.sqrt(zi.var(dim=1) + 0.0001) for zi in z]) / len(z)
 
                 # Step 1. Forward
-                #logger.info('Beginning Forward Pass...')
                 loss_jepa, loss_reg = 0., 0.
                 with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
                     h_v, h_a, h = forward_target(clips, asgram)
-                    # for i, m in enumerate(h_v):
-                    #     logger.info(f'POST TARGET h_v[{i}] shape: {m.shape}')
-                    # for i, m in enumerate(h_a):
-                    #     logger.info(f'POST TARGET h_a[{i}] shape: {m.shape}')
-
                     z = forward_context(clips, asgram, h_v, h_a)
                     logger.info(f'')
                     loss_jepa = loss_fn(z, h)  # jepa prediction loss
@@ -581,9 +508,6 @@ def main(args, resume_preempt=False):
                     loss_reg += torch.mean(F.relu(1.-pstd_z))
                 loss = loss_jepa + reg_coeff * loss_reg
 
-                #logger.info(f'LOSS IS: {loss}')
-
-                #logger.info(f'Loss is: {loss}')
                 # Step 2. Backward & step
                 _enc_norm, _pred_norm = 0., 0.
                 if mixed_precision:

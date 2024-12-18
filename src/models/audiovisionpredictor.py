@@ -224,19 +224,6 @@ class AudioVisionTransformerPredictor(nn.Module):
         if not isinstance(masks_tgt_a, list):
             masks_tgt_a = [masks_tgt_a]
 
-        # logger.info(f'(predictor)ctxt_v shape: {ctxt_v.shape}')
-        # logger.info(f'(predictor)ctxt_a shape: {ctxt_a.shape}')
-        # logger.info(f'(predictor)tgt_v  shape: {tgt_v.shape}')
-        # logger.info(f'(predictor)tgt_a  shape: {tgt_a.shape}')
-        # logger.info(f'(predictor)masks_ctxt_v len: {len(masks_ctxt_v)}')
-        # logger.info(f'(predictor)masks_ctxt_a len: {len(masks_ctxt_a)}')
-        # logger.info(f'(predictor)masks_tgt_v  len: {len(masks_tgt_v)}')
-        # logger.info(f'(predictor)masks_tgt_a  len: {len(masks_tgt_a)}')
-        # logger.info(f'(predictor)masks_ctxt_v[0] shape: {masks_ctxt_v[0].shape}')
-        # logger.info(f'(predictor)masks_ctxt_a[0] shape: {masks_ctxt_a[0].shape}')
-        # logger.info(f'(predictor)masks_tgt_v[0]  shape: {masks_tgt_v[0].shape}')
-        # logger.info(f'(predictor)masks_tgt_a[0]  shape: {masks_tgt_a[0].shape}')
-
         # Batch Size
         B = len(ctxt_v) // len(masks_ctxt_v)
         #B = 24
@@ -246,8 +233,6 @@ class AudioVisionTransformerPredictor(nn.Module):
         x_a = self.predictor_embed_a(ctxt_a)
         _, N_vctxt, D = x_v.shape
         _, N_actxt, _ = x_a.shape
-        #logger.info(f'(predictor)mapping context tokens to predictor dimensions, x_v shape: {x_v.shape}')
-        #logger.info(f'(predictor)mapping context tokens to predictor dimensions, x_a shape: {x_a.shape}')
 
         # Add positional embedding to ctxt tokens
         if self.predictor_pos_embed_v is not None:
@@ -255,9 +240,6 @@ class AudioVisionTransformerPredictor(nn.Module):
             ctxt_pos_embed_a = self.predictor_pos_embed_a.repeat(B, 1, 1)
             x_v += apply_masks(ctxt_pos_embed_v, masks_ctxt_v)
             x_a += apply_masks(ctxt_pos_embed_a, masks_ctxt_a)
-        #logger.info(f'(predictor)mapping target tokens to predictor dimensions, x_v shape: {x_v.shape}')
-        #logger.info(f'(predictor)mapping target tokens to predictor dimensions, x_a shape: {x_a.shape}')
-
 
         # Map target tokens to predictor dimensions & add noise (fwd diffusion)
         if self.mask_tokens_v is None:
@@ -267,7 +249,6 @@ class AudioVisionTransformerPredictor(nn.Module):
             pred_tokens_a = self.diffusion(pred_tokens_a)
         else:
             mask_index = mask_index % self.num_mask_tokens
-            #logger.info(f'(predictor) mask_index: {mask_index}')
             pred_tokens_v = self.mask_tokens_v[mask_index]
             pred_tokens_a = self.mask_tokens_a[mask_index]
             pred_tokens_v = pred_tokens_v.repeat(B, self.num_patches, 1)
@@ -292,8 +273,6 @@ class AudioVisionTransformerPredictor(nn.Module):
         x_a = x_a.repeat(len(masks_tgt_a), 1, 1)
         x_v = torch.cat([x_v, pred_tokens_v], dim=1)
         x_a = torch.cat([x_a, pred_tokens_a], dim=1)
-        #logger.info(f'X_V INPUT SHAPE: {x_v.shape}')
-        #logger.info(f'X_A INPUT SHAPE: {x_a.shape}')
 
         # FIXME: this implementation currently assumes masks_ctxt and masks_tgt
         # are alligned 1:1 (ok with MultiMask wrapper on predictor but
@@ -304,31 +283,21 @@ class AudioVisionTransformerPredictor(nn.Module):
         masks_tgt_a = torch.cat(masks_tgt_a, dim=0)
 
         masks_ctxt = torch.cat([masks_ctxt_v, masks_ctxt_a], dim=1)
-        #logger.info(f'MASKS_CTXT SHAPE: {masks_ctxt.shape}')
         masks_tgt = torch.cat([masks_tgt_v, masks_tgt_a], dim=1)
-        #logger.info(f'MASKS_TGT SHAPE: {masks_tgt.shape}')
 
         masks = torch.cat([masks_ctxt, masks_tgt], dim=1)
         x = torch.cat([x_v, x_a], dim=1)
-
-        #logger.info(f'MASKS SHAPE: {masks.shape}')
-        #logger.info(f'X INPUT SHAPE: {x.shape}')
 
         # Fwd prop
         for blk in self.predictor_blocks:
             x = blk(x, mask=masks)
         x = self.predictor_norm(x)
-        #logger.info(f'x shape post predictor norm: {x.shape}')
 
         # Return output corresponding to target tokens
         x1 = x[:, N_vctxt:x_v.shape[1]]
-        #logger.info(f'x1: {x1.shape}')
         x2 = x[:, x_v.shape[1] + N_actxt:]
-        #logger.info(f'x2: {x2.shape}')
         x = torch.cat([x1, x2], dim=1)
-        #logger.info(f'x3: {x.shape}')
         x = self.predictor_proj(x)
-        #logger.info(f'x4: {x.shape}')
         return x
 
 
