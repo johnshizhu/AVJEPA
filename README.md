@@ -1,23 +1,12 @@
 # AV-JEPA: Audio Video Joint Embedding Predictive Architecture
 
 Audio Video Joint Embedding Predictive Architecture is an attempt at developing a models that can create versatile multimodal representations through self-supervised training. 
-A write-up on our analysis can be found here: 
+
+A write-up on our analysis can be found here: [Link](https://github.com/johnshizhu/AVJEPA/blob/main/a_vjepa.pdf)
 
 AV-JEPA: John Zhu, Boluo Ge
 
 Original V-JEPA: Adrien Bardes, Quentin Garrido, Jean Ponce, Xinlei Chen, Michael Rabbat, Yann LeCun, Mahmoud Assran*, Nicolas Ballas*
-
-## Method
-AV-JEPA pretraining is purely self-supervised feature learning.
-
-
-<img src="https://github.com/facebookresearch/jepa/assets/7530871/72df7ef0-2ef5-48bb-be46-27963db91f3d" width=40%>
-&emsp;&emsp;&emsp;&emsp;&emsp;
-
-
-
-## Visualizations
-
 
 ## Code Structure (same as in VJEPA)
 
